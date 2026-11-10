@@ -77,7 +77,14 @@ async def handle(reader, writer):
         while line := await reader.readline():
             m = json.loads(line)
             now = datetime.now().strftime("%H:%M:%S")
-            db = f" @ {clean(m['db'])}" if m.get("db") else ""
+            db_label = m.get("db", "")
+            if db_label and m.get("db_type"):
+                db_type = "pgsql" if m["db_type"] == "postgres" else m["db_type"]
+                db = f" @ {clean(db_type)}:{clean(db_label)}"
+            elif db_label:
+                db = f" @ {clean(db_label)}"
+            else:
+                db = ""
             head = f"\n{Y}━━ {now}{N} {t} {Y}{m.get('tool', '')}{db}"
 
             if m["type"] == "request":

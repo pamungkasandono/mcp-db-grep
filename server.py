@@ -13,7 +13,7 @@ CONFIG = Path(os.environ.get("DB_MCP_CONFIG", "~/.config/db-mcp/config.toml")).e
 AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
 
 Konteks = Annotated[str, Field(
-    description="Wajib. Format '<aksi> · <nama-project>', contoh 'fetch data siswa · bekal-akun'")]
+    description="Wajib. Format '<nama-project> · <aksi>', contoh 'bekal-akun · ambil sample data siswa'")]
 DbName = Annotated[str, Field(description="Nama koneksi database. Lihat list_databases.")]
 
 
@@ -201,8 +201,8 @@ def audit(event, **kw):
 def check_konteks(k):
     k = re.sub(r"[\x00-\x1f\x7f]", "", k or "").strip()[:80]
     if "·" not in k:
-        raise ValueError("konteks wajib berformat '<aksi> · <nama-project>', "
-                         "contoh 'fetch data siswa · bekal-akun'")
+        raise ValueError("konteks wajib berformat '<nama-project> · <aksi>', "
+                         "contoh 'bekal-akun · ambil sample data siswa'")
     return k
 
 
@@ -216,9 +216,9 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             audit("denied", reason="monitor offline", db=d.name, konteks=konteks, sql=sql)
             raise RuntimeError("Monitor offline. Jalankan `python monitor.py` di terminal lain.")
 
-        audit("request", db=d.name, konteks=konteks, tool=tool, sql=sql, params=params)
+        audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
         try:
-            msg = {"tool": tool, "db": d.name, "konteks": konteks, "sql": sql}
+            msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "konteks": konteks, "sql": sql}
             if reject:
                 await link.send({"type": "blocked", "reason": reject, **msg})
                 audit("blocked", reason=reject)
