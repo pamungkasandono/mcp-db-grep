@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Interactive setup command `db-grep --init` with client harness detection (`opencode`, `claude`, `claude-desktop`).
+- Bundled instruction distribution `instructions/db-grep.md` automatically wired during init.
+- `--client` flag for scripted non-interactive client registration.
 - Standard `pyproject.toml` packaging supporting direct `pip install git+...` and `pipx install`.
 - Editable install mode in `just install`.
 - Single CLI entrypoint (`cli.py`) supporting `--server` and `--monitor` modes.

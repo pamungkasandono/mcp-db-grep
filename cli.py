@@ -24,6 +24,17 @@ def main():
         action="store_true",
         help="Run approval monitor interactive CLI",
     )
+    group.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize default config, rules, and register with AI clients",
+    )
+
+    parser.add_argument(
+        "--client",
+        choices=["opencode", "claude", "claude-desktop", "all", "none"],
+        help="Target AI client to configure when using --init (skip interactive prompt)",
+    )
 
     args = parser.parse_args()
 
@@ -33,6 +44,9 @@ def main():
     elif args.monitor:
         import monitor
         monitor.start()
+    elif args.init:
+        import installer
+        installer.run_init(target_harness=args.client)
 
 
 if __name__ == "__main__":

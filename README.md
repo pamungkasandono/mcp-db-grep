@@ -2,30 +2,36 @@
 
 Database MCP server with interactive approval monitor for AI assistants.
 
-## Instalasi Cepat (Pengguna / Non-Python Developer)
+## Instalasi & Setup Otomatis
 
-### Cara 1: Menggunakan pip
+### 1. Install CLI
 ```bash
 pip install git+https://github.com/pamungkasandono/mcp-db-grep.git
 ```
-*(Perintah `db-grep` langsung tersedia secara global di terminal)*
+*(atau menggunakan `pipx install git+...` / `uv tool install git+...`)*
 
-### Cara 2: Menggunakan pipx (Disarankan untuk CLI Python terisolasi)
+### 2. Inisialisasi & Hubungkan ke AI Client (Interactive Setup)
+Cukup jalankan:
 ```bash
-pipx install git+https://github.com/pamungkasandono/mcp-db-grep.git
+db-grep --init
 ```
+Perintah ini akan:
+- Mendeteksi harness/klien AI yang terpasang di komputer Anda (`opencode`, `claude` CLI, `claude-desktop`).
+- Menanyakan pilihan harness yang ingin Anda hubungkan secara interaktif (bisa pilih salah satu atau semua).
+- Menginstal aturan instruksi (`~/.config/db-grep/instructions.md`) agar AI berhenti dan menjelaskan tujuan query saat Anda menekan `n` (tolak) di monitor.
+- Membuat template konfigurasi di `~/.config/db-grep/config.toml`.
 
-### Cara 3: Menggunakan uv / uvx
+*Tips: Jika ingin otomatis tanpa prompt interaktif:*
 ```bash
-uv tool install git+https://github.com/pamungkasandono/mcp-db-grep.git
+db-grep --init --client opencode   # hanya untuk Opencode
+db-grep --init --client claude     # hanya untuk Claude Code CLI
+db-grep --init --client all        # untuk semua klien yang terdeteksi
 ```
 
 ---
 
-## Konfigurasi
-File konfigurasi berada di `~/.config/db-grep/config.toml` (chmod 600).
-
-Contoh konfigurasi:
+## Konfigurasi Database
+Edit file `~/.config/db-grep/config.toml` (chmod 600):
 ```toml
 [monitor]
 port = 8765
@@ -46,21 +52,11 @@ password = "your_password"
    db-grep --monitor
    ```
 
-2. **Daftarkan ke Claude / Opencode:**
-   - **Claude CLI:**
-     ```bash
-     claude mcp add db -- db-grep --server
-     ```
-   - **Opencode (`opencode.jsonc`):**
-     ```json
-     "mcp": {
-       "db": {
-         "type": "local",
-         "command": ["db-grep", "--server"],
-         "enabled": true
-       }
-     }
-     ```
+2. **Gunakan di Chat AI (Opencode / Claude):**
+   Minta AI membaca database seperti biasa:
+   > *"Tampilkan 5 user terbaru dari database bekal-akun"*
+   
+   Saat query butuh izin, terminal monitor akan meminta konfirmasi `[y/n]`. Jika Anda tolak (`n`), AI akan berhenti dan menjelaskan untuk apa query tersebut.
 
 ---
 
@@ -71,14 +67,6 @@ pip install -e .
 just monitor
 just server
 ```
-
-## Standar Pengembangan
-- **Commit**: Mengikuti [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
-- **Changelog**: Mengikuti [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-- **Versioning**: Mengikuti [Semantic Versioning 2.0.0](https://semver.org/).
-
-## Lisensi
-MIT
 
 ## Standar Pengembangan
 - **Commit**: Mengikuti [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
