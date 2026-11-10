@@ -18,10 +18,14 @@ File konfigurasi berada di `~/.config/db-mcp/config.toml` (chmod 600).
 
 ## Penggunaan / Menjalankan Task
 ```bash
-# Jalankan monitor di terminal terpisah
-just monitor
+# Jalankan monitor di terminal terpisah (via global command)
+db-mcp --monitor
 
 # Jalankan MCP server secara langsung
+db-mcp --server
+
+# Atau via task runner:
+just monitor
 just server
 ```
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Single CLI entrypoint (`cli.py`) supporting `--server` and `--monitor` modes.
+- Global executable wrapper `~/.local/bin/db-mcp`.
+- Opencode and Claude configuration support with `db-mcp --server`.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

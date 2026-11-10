@@ -3,11 +3,11 @@ default:
 
 # Run monitor UI
 monitor:
-    .venv/bin/python monitor.py
+    db-mcp --monitor
 
 # Run MCP server directly (stdio)
 server:
-    .venv/bin/python server.py
+    db-mcp --server
 
 # Install dependencies into .venv
 install:
@@ -15,4 +15,4 @@ install:
 
 # Syntax check
 check:
-    .venv/bin/python -m py_compile server.py monitor.py
+    .venv/bin/python -m py_compile cli.py server.py monitor.py
