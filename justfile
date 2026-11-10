@@ -11,7 +11,7 @@ server:
 
 # Install dependencies into .venv
 install:
-    .venv/bin/pip install "mcp<2" psycopg oracledb
+    .venv/bin/pip install -e .
 
 # Syntax check
 check:

@@ -1,8 +1,12 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 .pytest_cache/
 audit.jsonl
 config.toml
 .vscode/
+
 

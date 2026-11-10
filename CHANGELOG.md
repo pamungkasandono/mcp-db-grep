@@ -7,12 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Renamed project and CLI to `db-grep`.
-- Default config location moved to `~/.config/db-grep/config.toml` (with fallback).
-- Global binary command updated to `db-grep`.
-
 ### Added
+- Standard `pyproject.toml` packaging supporting direct `pip install git+...` and `pipx install`.
+- Editable install mode in `just install`.
 - Single CLI entrypoint (`cli.py`) supporting `--server` and `--monitor` modes.
 - Global executable wrapper `~/.local/bin/db-grep`.
 - Opencode and Claude configuration support with `db-grep --server`.

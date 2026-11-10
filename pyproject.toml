@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "db-grep"
+version = "0.1.0"
+description = "Database MCP server with interactive approval monitor"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Pamungkas" }
+]
+dependencies = [
+    "mcp<2",
+    "psycopg",
+    "oracledb",
+    "pydantic"
+]
+
+[project.scripts]
+db-grep = "cli:main"
+
+[tool.setuptools]
+py-modules = ["cli", "server", "monitor"]
