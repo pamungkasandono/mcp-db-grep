@@ -7,9 +7,9 @@ from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 
 logging.basicConfig(stream=sys.stderr)  # stdout dipakai protokol stdio
-log = logging.getLogger("db-mcp")
+log = logging.getLogger("db-grep")
 
-CONFIG = Path(os.environ.get("DB_MCP_CONFIG", "~/.config/db-mcp/config.toml")).expanduser()
+CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
 AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
 
 Konteks = Annotated[str, Field(
@@ -187,7 +187,7 @@ async def lifespan(server):
     yield
 
 
-mcp = FastMCP("db-mcp", lifespan=lifespan)
+mcp = FastMCP("db-grep", lifespan=lifespan)
 
 
 def audit(event, **kw):

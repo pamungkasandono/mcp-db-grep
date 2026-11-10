@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Ensure db-mcp directory is on sys.path
+# Ensure db-grep directory is on sys.path
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -10,7 +10,7 @@ if str(BASE_DIR) not in sys.path:
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="db-mcp",
+        prog="db-grep",
         description="Database MCP CLI: Run MCP Server or Terminal Monitor",
     )
     group = parser.add_mutually_exclusive_group(required=True)

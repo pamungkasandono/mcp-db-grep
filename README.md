@@ -1,4 +1,4 @@
-# db-mcp
+# db-grep
 
 Database MCP server with interactive approval monitor for AI assistants.
 
@@ -14,15 +14,15 @@ just install
 ```
 
 ## Konfigurasi
-File konfigurasi berada di `~/.config/db-mcp/config.toml` (chmod 600).
+File konfigurasi berada di `~/.config/db-grep/config.toml` (chmod 600).
 
 ## Penggunaan / Menjalankan Task
 ```bash
 # Jalankan monitor di terminal terpisah (via global command)
-db-mcp --monitor
+db-grep --monitor
 
 # Jalankan MCP server secara langsung
-db-mcp --server
+db-grep --server
 
 # Atau via task runner:
 just monitor

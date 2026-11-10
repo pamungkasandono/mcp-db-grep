@@ -2,7 +2,7 @@ import asyncio, json, os, re, time, tomllib
 from datetime import datetime
 from pathlib import Path
 
-CONFIG = Path(os.environ.get("DB_MCP_CONFIG", "~/.config/db-mcp/config.toml")).expanduser()
+CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
 try:
     with open(CONFIG, "rb") as f:
         _cfg = tomllib.load(f)

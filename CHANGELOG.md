@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Renamed project and CLI to `db-grep`.
+- Default config location moved to `~/.config/db-grep/config.toml` (with fallback).
+- Global binary command updated to `db-grep`.
+
 ### Added
 - Single CLI entrypoint (`cli.py`) supporting `--server` and `--monitor` modes.
-- Global executable wrapper `~/.local/bin/db-mcp`.
-- Opencode and Claude configuration support with `db-mcp --server`.
+- Global executable wrapper `~/.local/bin/db-grep`.
+- Opencode and Claude configuration support with `db-grep --server`.
 - Strict AI denial protocol and feedback prompts on monitor rejection.
 
 ## [0.1.0] - 2026-11-11
