@@ -233,21 +233,9 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             if not json.loads(line)["approved"]:
                 audit("denied", reason="user")
                 raise PermissionError(
-                    f"ACTION_DENIED_BY_USER: Query was explicitly rejected by user in terminal monitor.\n"
-                    f"Rejected SQL:\n{sql}\n"
-                    f"Intent Context: {konteks}\n\n"
-                    f"MANDATORY AI RESPONSE TEMPLATE (DO NOT SKIP):\n"
-                    f"1. DO NOT call any more tools.\n"
-                    f"2. Print:\n"
-                    f"   - Rejected query:\n"
-                    f"     ```sql\n"
-                    f"     {sql}\n"
-                    f"     ```\n"
-                    f"   - Why this query was run: explain what data this query gets and why it matters for user's prompt.\n"
-                    f"   - Impact: what cannot be done without this data.\n"
-                    f"3. Only after giving that explanation, ask user via question tool:\n"
-                    f"   - Option 1: Retry query (user will approve in monitor)\n"
-                    f"   - Option 2: Continue without database query"
+                    f"ACTION_DENIED_BY_USER: Query was rejected by user in terminal monitor.\n"
+                    f"SQL: {sql}\n"
+                    f"Context: {konteks}"
                 )
 
             t0 = time.monotonic()
