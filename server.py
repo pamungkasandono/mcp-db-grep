@@ -232,7 +232,17 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 raise PermissionError("Monitor terputus saat menunggu persetujuan")
             if not json.loads(line)["approved"]:
                 audit("denied", reason="user")
-                raise PermissionError("Ditolak oleh user")
+                raise PermissionError(
+                    f"ACTION_DENIED_BY_USER: Query was explicitly rejected by user in terminal monitor.\n"
+                    f"Rejected SQL: {sql}\n"
+                    f"Context: {konteks}\n\n"
+                    f"STRICT INSTRUCTIONS FOR AI:\n"
+                    f"1. DO NOT retry this query. DO NOT call any other db-mcp tools.\n"
+                    f"2. STOP tool calls now.\n"
+                    f"3. Tell user clearly which query was rejected: `{sql}`.\n"
+                    f"4. Explain why query was needed in simple English (for example: why this data was needed for user request).\n"
+                    f"5. Ask user how to proceed (use question tool or prompt): ask if user wants to retry with approval or use other way without database."
+                )
 
             t0 = time.monotonic()
             try:
