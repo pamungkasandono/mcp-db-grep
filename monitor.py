@@ -129,7 +129,12 @@ async def main():
         await srv.serve_forever()
 
 
-try:
-    asyncio.run(main())
-except KeyboardInterrupt:
-    pass
+def start():
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    start()

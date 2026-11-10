@@ -283,9 +283,13 @@ async def query(db: DbName, sql: str, konteks: Konteks) -> str:
     return await execute("query", d, konteks, sql, (), reject)
 
 
-if __name__ == "__main__":
+def start():
     try:
         databases()  # config rusak = gagal jelas saat start
     except ValueError as e:
         sys.exit(str(e))
     mcp.run()
+
+
+if __name__ == "__main__":
+    start()
