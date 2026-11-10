@@ -234,14 +234,20 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 audit("denied", reason="user")
                 raise PermissionError(
                     f"ACTION_DENIED_BY_USER: Query was explicitly rejected by user in terminal monitor.\n"
-                    f"Rejected SQL: {sql}\n"
-                    f"Context: {konteks}\n\n"
-                    f"STRICT INSTRUCTIONS FOR AI:\n"
-                    f"1. DO NOT retry this query. DO NOT call any other db-mcp tools.\n"
-                    f"2. STOP tool calls now.\n"
-                    f"3. Tell user clearly which query was rejected: `{sql}`.\n"
-                    f"4. Explain why query was needed in simple English (for example: why this data was needed for user request).\n"
-                    f"5. Ask user how to proceed (use question tool or prompt): ask if user wants to retry with approval or use other way without database."
+                    f"Rejected SQL:\n{sql}\n"
+                    f"Intent Context: {konteks}\n\n"
+                    f"MANDATORY AI RESPONSE TEMPLATE (DO NOT SKIP):\n"
+                    f"1. DO NOT call any more tools.\n"
+                    f"2. Print:\n"
+                    f"   - Rejected query:\n"
+                    f"     ```sql\n"
+                    f"     {sql}\n"
+                    f"     ```\n"
+                    f"   - Why this query was run: explain what data this query gets and why it matters for user's prompt.\n"
+                    f"   - Impact: what cannot be done without this data.\n"
+                    f"3. Only after giving that explanation, ask user via question tool:\n"
+                    f"   - Option 1: Retry query (user will approve in monitor)\n"
+                    f"   - Option 2: Continue without database query"
                 )
 
             t0 = time.monotonic()
