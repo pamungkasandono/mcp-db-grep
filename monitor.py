@@ -2,13 +2,18 @@ import asyncio, json, os, re, time, tomllib
 from datetime import datetime
 from pathlib import Path
 
+DEFAULT_PORT = 48260
+PORT_RANGE_SIZE = 10
+
 CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
+STATE_PORT_FILE = CONFIG.parent / "monitor.port"
+
 try:
     with open(CONFIG, "rb") as f:
         _cfg = tomllib.load(f)
 except FileNotFoundError:
     _cfg = {}
-PORT = int(os.environ.get("MONITOR_PORT") or _cfg.get("monitor", {}).get("port", 8765))
+PREFERRED_PORT = int(os.environ.get("MONITOR_PORT") or _cfg.get("monitor", {}).get("port", DEFAULT_PORT))
 
 PROMPT_TIMEOUT = 110  # seconds; timeout = auto-reject
 R, G, Y, D, N = "\033[31m", "\033[32m", "\033[33m", "\033[2m", "\033[0m"
@@ -129,11 +134,58 @@ async def handle(reader, writer):
         writer.close()
 
 
+def write_state_port(port: int):
+    STATE_PORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # Atomic write / replace existing file
+        tmp = STATE_PORT_FILE.with_suffix(".tmp")
+        tmp.write_text(str(port), encoding="utf-8")
+        tmp.replace(STATE_PORT_FILE)
+    except Exception:
+        STATE_PORT_FILE.write_text(str(port), encoding="utf-8")
+
+
+def remove_state_port():
+    try:
+        if STATE_PORT_FILE.exists():
+            STATE_PORT_FILE.unlink()
+    except Exception:
+        pass
+
+
 async def main():
-    srv = await asyncio.start_server(handle, "127.0.0.1", PORT)
-    print(f"Monitor running on 127.0.0.1:{PORT}. Waiting for client session...")
-    async with srv:
-        await srv.serve_forever()
+    srv = None
+    bound_port = None
+    
+    # Try preferred port, then fallback across range
+    ports_to_try = [PREFERRED_PORT] + [
+        p for p in range(DEFAULT_PORT, DEFAULT_PORT + PORT_RANGE_SIZE) if p != PREFERRED_PORT
+    ]
+    
+    for port in ports_to_try:
+        try:
+            srv = await asyncio.start_server(handle, "127.0.0.1", port)
+            bound_port = port
+            break
+        except OSError:
+            continue
+
+    if srv is None:
+        print(f"{R}Error: Could not bind to any monitor port in range {DEFAULT_PORT}-{DEFAULT_PORT + PORT_RANGE_SIZE - 1}{N}")
+        return
+
+    # Overwrite / replace any previous or stale monitor.port
+    write_state_port(bound_port)
+
+    if bound_port != PREFERRED_PORT:
+        print(f"{Y}Note: Preferred port {PREFERRED_PORT} was busy. Fallback to {bound_port}.{N}")
+    print(f"Monitor running on 127.0.0.1:{bound_port}. Waiting for client session...")
+
+    try:
+        async with srv:
+            await srv.serve_forever()
+    finally:
+        remove_state_port()
 
 
 def start():
@@ -141,6 +193,8 @@ def start():
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+    finally:
+        remove_state_port()
 
 
 if __name__ == "__main__":

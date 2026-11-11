@@ -57,7 +57,7 @@ db-grep --init --client all           # configure all harnesses
 Edit `~/.config/db-grep/config.toml`:
 ```toml
 [monitor]
-port = 8765
+port = 48260  # unique safe port (auto-fallback across 48260-48270 if busy)
 
 [db.my-postgres]
 type = "postgres"

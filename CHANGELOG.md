@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Dynamic port fallback across safe private range `48260`–`48270` when preferred port is occupied.
+- State file synchronization (`~/.config/db-grep/monitor.port`) ensuring server and monitor auto-connect without manual configuration.
+- Startup logic to safely overwrite/replace any stale or leftover `monitor.port` from previous crashes.
+- Changed default monitor port to unique safe port `48260`.
 - 25-second graceful connection retry loop in `server.py` waiting for monitor to open before raising error.
 - Strict anti-bypass guardrail rules (`MONITOR_OFFLINE`) forbidding AI from reading `.env` files or creating direct DB scripts.
 - Extended multi-harness installer support to 9 AI coding clients in structured order:

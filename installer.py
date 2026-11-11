@@ -49,7 +49,7 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 """
 
 SAMPLE_CONFIG = """[monitor]
-port = 8765
+port = 48260
 
 # Example Postgres Connection:
 # [db.my-app]

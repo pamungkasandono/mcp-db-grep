@@ -152,6 +152,48 @@ def get_db(name):
     return cur
 
 
+DEFAULT_PORT = 48260
+PORT_RANGE_SIZE = 10
+STATE_PORT_FILE = CONFIG.parent / "monitor.port"
+
+
+def resolve_candidate_ports():
+    ports = []
+    # 1. State file written by monitor
+    if STATE_PORT_FILE.exists():
+        try:
+            val = int(STATE_PORT_FILE.read_text(encoding="utf-8").strip())
+            if 1 <= val <= 65535:
+                ports.append(val)
+        except Exception:
+            pass
+
+    # 2. Environment variable
+    env_port = os.environ.get("MONITOR_PORT")
+    if env_port:
+        try:
+            val = int(env_port)
+            if val not in ports:
+                ports.append(val)
+        except ValueError:
+            pass
+
+    # 3. Config file
+    try:
+        cfg_port = int(read_config().get("monitor", {}).get("port", DEFAULT_PORT))
+        if cfg_port not in ports:
+            ports.append(cfg_port)
+    except Exception:
+        pass
+
+    # 4. Fallback range scan
+    for p in range(DEFAULT_PORT, DEFAULT_PORT + PORT_RANGE_SIZE):
+        if p not in ports:
+            ports.append(p)
+
+    return ports
+
+
 # ---------- connection to monitor (one link per client session) ----------
 class Link:
     reader = writer = None
@@ -160,18 +202,21 @@ class Link:
     async def ensure(self, timeout_sec=0):
         if self.writer and not self.writer.is_closing() and not self.reader.at_eof():
             return
-        port = int(os.environ.get("MONITOR_PORT") or read_config().get("monitor", {}).get("port", 8765))
         
         deadline = time.monotonic() + max(0, timeout_sec)
         while True:
-            try:
-                self.reader, self.writer = await asyncio.open_connection("127.0.0.1", port)
-                self.session = json.loads(await asyncio.wait_for(self.reader.readline(), 5))["session"]
-                return
-            except (OSError, asyncio.TimeoutError):
-                if time.monotonic() >= deadline:
-                    raise
-                await asyncio.sleep(1)
+            candidate_ports = resolve_candidate_ports()
+            for port in candidate_ports:
+                try:
+                    self.reader, self.writer = await asyncio.open_connection("127.0.0.1", port)
+                    self.session = json.loads(await asyncio.wait_for(self.reader.readline(), 5))["session"]
+                    return
+                except (OSError, asyncio.TimeoutError):
+                    continue
+
+            if time.monotonic() >= deadline:
+                raise OSError("No active monitor connection found")
+            await asyncio.sleep(1)
 
     async def send(self, msg):
         self.writer.write((json.dumps(msg, default=str) + "\n").encode())
@@ -225,7 +270,7 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
         except (OSError, asyncio.TimeoutError):
             audit("denied", reason="monitor offline", db=d.name, konteks=konteks, sql=sql)
             raise PermissionError(
-                f"MONITOR_OFFLINE: Approval monitor on port 8765 is not running.\n"
+                f"MONITOR_OFFLINE: Approval monitor is not running.\n"
                 f"Target Database: {d.name}\n"
                 f"Requested Action: {konteks}\n"
                 f"SQL: {sql}\n\n"
