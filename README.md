@@ -115,6 +115,7 @@ python3 -m venv .venv
 pip install -e .
 just monitor
 just server
+just test      # run automated test suite
 ```
 
 ## License

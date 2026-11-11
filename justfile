@@ -15,4 +15,8 @@ install:
 
 # Syntax check
 check:
-    .venv/bin/python -m py_compile cli.py server.py monitor.py
+    .venv/bin/python -m py_compile cli.py server.py monitor.py installer.py
+
+# Run test suite
+test:
+    .venv/bin/python -m unittest discover -s tests -p "test_*.py" -v

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Automated unit test suite under `tests/` covering CLI flags, port fallback, server logic, and multi-harness installer.
+- Added `just test` runner command using Python stdlib `unittest`.
 - Dynamic port fallback across safe private range `48260`–`48270` when preferred port is occupied.
 - State file synchronization (`~/.config/db-grep/monitor.port`) ensuring server and monitor auto-connect without manual configuration.
 - Startup logic to safely overwrite/replace any stale or leftover `monitor.port` from previous crashes.
