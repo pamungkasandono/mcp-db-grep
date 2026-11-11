@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 25-second graceful connection retry loop in `server.py` waiting for monitor to open before raising error.
+- Strict anti-bypass guardrail rules (`MONITOR_OFFLINE`) forbidding AI from reading `.env` files or creating direct DB scripts.
 - Extended multi-harness installer support to 9 AI coding clients in structured order:
   1. Claude Code CLI
   2. Claude Desktop

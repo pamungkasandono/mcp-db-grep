@@ -103,6 +103,9 @@ password = "your_password"
    - Press **`y`**: Query runs, result table is displayed, rows are sent to AI.
    - Press **`n`**: Query cancelled, AI stops and explains why the query was needed.
 
+*Forgot to start the monitor?*
+Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep --monitor`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
+
 ---
 
 ## Local Development

@@ -157,12 +157,21 @@ class Link:
     reader = writer = None
     session = "?"
 
-    async def ensure(self):
+    async def ensure(self, timeout_sec=0):
         if self.writer and not self.writer.is_closing() and not self.reader.at_eof():
             return
         port = int(os.environ.get("MONITOR_PORT") or read_config().get("monitor", {}).get("port", 8765))
-        self.reader, self.writer = await asyncio.open_connection("127.0.0.1", port)
-        self.session = json.loads(await asyncio.wait_for(self.reader.readline(), 5))["session"]
+        
+        deadline = time.monotonic() + max(0, timeout_sec)
+        while True:
+            try:
+                self.reader, self.writer = await asyncio.open_connection("127.0.0.1", port)
+                self.session = json.loads(await asyncio.wait_for(self.reader.readline(), 5))["session"]
+                return
+            except (OSError, asyncio.TimeoutError):
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(1)
 
     async def send(self, msg):
         self.writer.write((json.dumps(msg, default=str) + "\n").encode())
@@ -181,7 +190,7 @@ lock = asyncio.Lock()
 @asynccontextmanager
 async def lifespan(server):
     try:
-        await link.ensure()  # register to monitor when client opens
+        await link.ensure(timeout_sec=0)  # register to monitor when client opens
     except (OSError, asyncio.TimeoutError, ValueError):
         pass  # monitor offline: retry on first tool call
     yield
@@ -211,10 +220,17 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
     konteks = check_konteks(konteks)
     async with lock:
         try:
-            await link.ensure()  # auto-reconnect if monitor restarted
+            # Wait up to 25s if monitor is not running yet
+            await link.ensure(timeout_sec=25)
         except (OSError, asyncio.TimeoutError):
             audit("denied", reason="monitor offline", db=d.name, konteks=konteks, sql=sql)
-            raise RuntimeError("Monitor offline. Run `db-grep --monitor` in another terminal.")
+            raise PermissionError(
+                f"MONITOR_OFFLINE: Approval monitor on port 8765 is not running.\n"
+                f"Target Database: {d.name}\n"
+                f"Requested Action: {konteks}\n"
+                f"SQL: {sql}\n\n"
+                f"The database monitor (`db-grep --monitor`) must be opened in another terminal to review and approve this action."
+            )
 
         audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
         try:
