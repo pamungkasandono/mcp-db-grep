@@ -44,7 +44,19 @@ def main():
 
     parser.add_argument(
         "--client",
-        choices=["opencode", "claude", "claude-desktop", "all", "none"],
+        choices=[
+            "claude",
+            "claude-desktop",
+            "opencode",
+            "antigravity",
+            "cursor",
+            "codex",
+            "roo-code",
+            "zed",
+            "pi",
+            "all",
+            "none",
+        ],
         help="Target AI client to configure when using --init (skip interactive prompt)",
     )
 

@@ -29,16 +29,28 @@ pip install git+https://github.com/pamungkasandono/mcp-db-grep.git
 db-grep --init
 ```
 This command will:
-- Detect your AI client (`opencode`, `claude` CLI, `claude-desktop`).
-- Ask which client to connect.
+- Detect your AI coding assistants on your system.
+- Ask which harness to connect (`[default: detected only]`).
 - Install safety rules so AI stops and explains when queries are rejected.
 - Create config file at `~/.config/db-grep/config.toml`.
 
+**Supported AI Clients & Harnesses:**
+1. **Claude Code CLI** (`claude mcp add`)
+2. **Claude Desktop** (`claude_desktop_config.json`)
+3. **OpenCode** (`opencode.jsonc`)
+4. **Antigravity** (`~/.gemini/config/mcp_config.json`)
+5. **Cursor** (`~/.cursor/mcp.json`)
+6. **Codex CLI** (`~/.codex/config.toml`)
+7. **Roo Code** (VS Code Extension `cline_mcp_settings.json`)
+8. **Zed Editor** (`settings.json`)
+9. **Pi** (`~/.pi/agent/mcp.json`)
+
 *Non-interactive shortcut:*
 ```bash
-db-grep --init --client opencode   # configure only Opencode
-db-grep --init --client claude     # configure only Claude Code CLI
-db-grep --init --client all        # configure all detected clients
+db-grep --init --client claude        # configure Claude Code CLI
+db-grep --init --client antigravity   # configure Antigravity
+db-grep --init --client cursor        # configure Cursor
+db-grep --init --client all           # configure all harnesses
 ```
 
 ### 3. Add Your Database

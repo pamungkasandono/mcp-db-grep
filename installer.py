@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,25 @@ port = 8765
 """
 
 
+# ---------------- Helper Path & JSON Utilities ----------------
+
+def read_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        content = path.read_text(encoding="utf-8")
+        # Remove single-line comments // if any for lenient jsonc
+        stripped = re.sub(r"^\s*//.*$", "", content, flags=re.MULTILINE)
+        return json.loads(stripped) if stripped.strip() else {}
+    except Exception:
+        return {}
+
+
+def write_json_file(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def get_claude_desktop_config_path() -> Path:
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
@@ -56,66 +76,59 @@ def get_claude_desktop_config_path() -> Path:
         return Path("~/.config/Claude/claude_desktop_config.json").expanduser()
 
 
-def detect_harnesses():
-    detected = {}
-
-    # Opencode
-    opencode_dir = Path("~/.config/opencode").expanduser()
-    if opencode_dir.exists():
-        detected["opencode"] = str(opencode_dir)
-
-    # Claude CLI / Claude Code
-    if shutil.which("claude"):
-        detected["claude"] = "Claude Code CLI detected"
-
-    # Claude Desktop
-    claude_desktop_cfg = get_claude_desktop_config_path()
-    # Check if config file exists or parent app directory exists
-    if claude_desktop_cfg.exists() or claude_desktop_cfg.parent.exists():
-        detected["claude-desktop"] = str(claude_desktop_cfg)
-
-    return detected
+def get_cursor_config_path() -> Path:
+    if sys.platform == "win32":
+        userprofile = os.environ.get("USERPROFILE")
+        base = Path(userprofile) if userprofile else Path("~").expanduser()
+        return base / ".cursor" / "mcp.json"
+    else:
+        return Path("~/.cursor/mcp.json").expanduser()
 
 
-def install_opencode(instructions_file: Path):
-    opencode_dir = Path("~/.config/opencode").expanduser()
-    opencode_dir.mkdir(parents=True, exist_ok=True)
-    target_json = opencode_dir / "opencode.jsonc"
-    if not target_json.exists():
-        alt = opencode_dir / "opencode.json"
-        if alt.exists():
-            target_json = alt
-        else:
-            target_json = opencode_dir / "opencode.jsonc"
-
-    data = {}
-    if target_json.exists():
-        try:
-            with open(target_json, "r") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-
-    instr_path = str(instructions_file)
-    instructions = data.get("instructions", [])
-    if instr_path not in instructions:
-        instructions.append(instr_path)
-        data["instructions"] = instructions
-
-    mcp = data.get("mcp", {})
-    mcp["db"] = {
-        "type": "local",
-        "command": ["db-grep", "--server"],
-        "enabled": True,
-    }
-    data["mcp"] = mcp
-
-    with open(target_json, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"  ✓ Configured Opencode: {target_json}")
+def get_codex_config_path() -> Path:
+    if sys.platform == "win32":
+        userprofile = os.environ.get("USERPROFILE")
+        base = Path(userprofile) if userprofile else Path("~").expanduser()
+        return base / ".codex" / "config.toml"
+    else:
+        return Path("~/.codex/config.toml").expanduser()
 
 
-def install_claude_cli():
+def get_roo_code_config_path() -> Path:
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
+        return base / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"
+    elif sys.platform == "darwin":
+        return Path("~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json").expanduser()
+    else:
+        return Path("~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json").expanduser()
+
+
+def get_zed_config_path() -> Path:
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
+        return base / "Zed" / "settings.json"
+    else:
+        return Path("~/.config/zed/settings.json").expanduser()
+
+
+def get_pi_agent_dir() -> Path:
+    env_dir = os.environ.get("PI_CODING_AGENT_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser()
+    return Path("~/.pi/agent").expanduser()
+
+
+# ---------------- 9 Harness Implementations in Ordered Sequence ----------------
+
+# 1. Claude Code CLI
+def detect_claude_cli() -> bool:
+    return bool(shutil.which("claude"))
+
+
+def install_claude_cli(_instructions_file: Path):
     if not shutil.which("claude"):
         print("  ✗ claude command not found in PATH")
         return
@@ -130,53 +143,266 @@ def install_claude_cli():
         print(f"  ✗ Failed to register to Claude CLI: {e}")
 
 
-def install_claude_desktop():
-    cfg_file = get_claude_desktop_config_path()
-    cfg_file.parent.mkdir(parents=True, exist_ok=True)
-    data = {}
-    if cfg_file.exists():
-        try:
-            with open(cfg_file, "r") as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
+# 2. Claude Desktop
+def detect_claude_desktop() -> bool:
+    cfg = get_claude_desktop_config_path()
+    return cfg.exists() or cfg.parent.exists()
 
+
+def install_claude_desktop(_instructions_file: Path):
+    cfg_file = get_claude_desktop_config_path()
+    data = read_json_file(cfg_file)
     mcp = data.get("mcpServers", {})
     mcp["db"] = {
         "command": "db-grep",
         "args": ["--server"],
     }
     data["mcpServers"] = mcp
-
-    with open(cfg_file, "w") as f:
-        json.dump(data, f, indent=2)
+    write_json_file(cfg_file, data)
     print(f"  ✓ Configured Claude Desktop: {cfg_file}")
 
 
-def ask_user_choices(detected: dict) -> list[str]:
-    print("\nSupported AI clients / harnesses:")
-    harnesses = ["opencode", "claude", "claude-desktop"]
-    descriptions = {
-        "opencode": "Opencode CLI (~/.config/opencode)",
-        "claude": "Claude Code CLI (`claude mcp add`)",
-        "claude-desktop": f"Claude Desktop App ({get_claude_desktop_config_path()})",
+# 3. OpenCode
+def detect_opencode() -> bool:
+    opencode_dir = Path("~/.config/opencode").expanduser()
+    return opencode_dir.exists() or bool(shutil.which("opencode"))
+
+
+def install_opencode(instructions_file: Path):
+    opencode_dir = Path("~/.config/opencode").expanduser()
+    opencode_dir.mkdir(parents=True, exist_ok=True)
+    target_json = opencode_dir / "opencode.jsonc"
+    if not target_json.exists():
+        alt = opencode_dir / "opencode.json"
+        target_json = alt if alt.exists() else opencode_dir / "opencode.jsonc"
+
+    data = read_json_file(target_json)
+
+    instr_path = str(instructions_file)
+    instructions = data.get("instructions", [])
+    if instr_path not in instructions:
+        instructions.append(instr_path)
+        data["instructions"] = instructions
+
+    mcp = data.get("mcp", {})
+    mcp["db"] = {
+        "type": "local",
+        "command": ["db-grep", "--server"],
+        "enabled": True,
     }
+    data["mcp"] = mcp
+    write_json_file(target_json, data)
+    print(f"  ✓ Configured OpenCode: {target_json}")
 
-    detected_keys = [k for k in harnesses if k in detected]
-    detected_indices = []
 
-    for idx, key in enumerate(harnesses, start=1):
-        is_detected = key in detected
+# 4. Antigravity
+def detect_antigravity() -> bool:
+    agy_cfg = Path("~/.gemini/config/mcp_config.json").expanduser()
+    return agy_cfg.parent.exists() or Path("~/.gemini").expanduser().exists() or bool(shutil.which("antigravity"))
+
+
+def install_antigravity(_instructions_file: Path):
+    cfg_file = Path("~/.gemini/config/mcp_config.json").expanduser()
+    data = read_json_file(cfg_file)
+    mcp = data.get("mcpServers", {})
+    mcp["db"] = {
+        "command": "db-grep",
+        "args": ["--server"],
+    }
+    data["mcpServers"] = mcp
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured Antigravity: {cfg_file}")
+
+
+# 5. Cursor
+def detect_cursor() -> bool:
+    cfg = get_cursor_config_path()
+    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("cursor"))
+
+
+def install_cursor(_instructions_file: Path):
+    cfg_file = get_cursor_config_path()
+    data = read_json_file(cfg_file)
+    mcp = data.get("mcpServers", {})
+    mcp["db"] = {
+        "command": "db-grep",
+        "args": ["--server"],
+    }
+    data["mcpServers"] = mcp
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured Cursor: {cfg_file}")
+
+
+# 6. Codex CLI
+def detect_codex() -> bool:
+    cfg = get_codex_config_path()
+    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("codex"))
+
+
+def install_codex(_instructions_file: Path):
+    cfg_file = get_codex_config_path()
+    cfg_file.parent.mkdir(parents=True, exist_ok=True)
+    content = cfg_file.read_text(encoding="utf-8") if cfg_file.exists() else ""
+
+    entry = '\n[mcp_servers.db]\ncommand = "db-grep"\nargs = ["--server"]\n'
+    if "[mcp_servers.db]" in content:
+        # Already configured
+        print(f"  ✓ Codex already configured: {cfg_file}")
+        return
+
+    updated = (content.rstrip() + "\n" + entry).lstrip()
+    cfg_file.write_text(updated, encoding="utf-8")
+    print(f"  ✓ Configured Codex: {cfg_file}")
+
+
+# 7. Roo Code
+def detect_roo_code() -> bool:
+    cfg = get_roo_code_config_path()
+    return cfg.exists() or cfg.parent.exists()
+
+
+def install_roo_code(_instructions_file: Path):
+    cfg_file = get_roo_code_config_path()
+    data = read_json_file(cfg_file)
+    mcp = data.get("mcpServers", {})
+    mcp["db"] = {
+        "command": "db-grep",
+        "args": ["--server"],
+        "disabled": False,
+        "autoApprove": [],
+    }
+    data["mcpServers"] = mcp
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured Roo Code: {cfg_file}")
+
+
+# 8. Zed Editor
+def detect_zed() -> bool:
+    cfg = get_zed_config_path()
+    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("zed"))
+
+
+def install_zed(_instructions_file: Path):
+    cfg_file = get_zed_config_path()
+    data = read_json_file(cfg_file)
+    context_servers = data.get("context_servers", {})
+    context_servers["db"] = {
+        "command": {
+            "path": "db-grep",
+            "args": ["--server"],
+        }
+    }
+    data["context_servers"] = context_servers
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured Zed Editor: {cfg_file}")
+
+
+# 9. Pi
+def detect_pi() -> bool:
+    agent_dir = get_pi_agent_dir()
+    return agent_dir.exists() or bool(shutil.which("pi"))
+
+
+def install_pi(_instructions_file: Path):
+    cfg_file = get_pi_agent_dir() / "mcp.json"
+    data = read_json_file(cfg_file)
+    mcp = data.get("mcpServers", {})
+    mcp["db"] = {
+        "command": "db-grep",
+        "args": ["--server"],
+    }
+    data["mcpServers"] = mcp
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured Pi: {cfg_file}")
+
+
+# ---------------- Registry Definition in Exact Requested Order ----------------
+
+HARNESS_REGISTRY = [
+    {
+        "id": "claude",
+        "name": "Claude Code CLI",
+        "desc": "`claude mcp add`",
+        "detect": detect_claude_cli,
+        "install": install_claude_cli,
+    },
+    {
+        "id": "claude-desktop",
+        "name": "Claude Desktop",
+        "desc": lambda: str(get_claude_desktop_config_path()),
+        "detect": detect_claude_desktop,
+        "install": install_claude_desktop,
+    },
+    {
+        "id": "opencode",
+        "name": "OpenCode",
+        "desc": "~/.config/opencode/opencode.jsonc",
+        "detect": detect_opencode,
+        "install": install_opencode,
+    },
+    {
+        "id": "antigravity",
+        "name": "Antigravity",
+        "desc": "~/.gemini/config/mcp_config.json",
+        "detect": detect_antigravity,
+        "install": install_antigravity,
+    },
+    {
+        "id": "cursor",
+        "name": "Cursor",
+        "desc": lambda: str(get_cursor_config_path()),
+        "detect": detect_cursor,
+        "install": install_cursor,
+    },
+    {
+        "id": "codex",
+        "name": "Codex CLI",
+        "desc": lambda: str(get_codex_config_path()),
+        "detect": detect_codex,
+        "install": install_codex,
+    },
+    {
+        "id": "roo-code",
+        "name": "Roo Code",
+        "desc": lambda: str(get_roo_code_config_path()),
+        "detect": detect_roo_code,
+        "install": install_roo_code,
+    },
+    {
+        "id": "zed",
+        "name": "Zed Editor",
+        "desc": lambda: str(get_zed_config_path()),
+        "detect": detect_zed,
+        "install": install_zed,
+    },
+    {
+        "id": "pi",
+        "name": "Pi Coding Agent",
+        "desc": lambda: str(get_pi_agent_dir() / "mcp.json"),
+        "detect": detect_pi,
+        "install": install_pi,
+    },
+]
+
+
+def ask_user_choices(detected_map: dict) -> list[str]:
+    print("\nSupported AI clients / harnesses:")
+
+    detected_ids = []
+    for idx, item in enumerate(HARNESS_REGISTRY, start=1):
+        hid = item["id"]
+        is_detected = detected_map.get(hid, False)
         status = "(detected)" if is_detected else "(not installed)"
         if is_detected:
-            detected_indices.append(str(idx))
-        print(f"  [{idx}] {key:<15} - {descriptions[key]} {status}")
+            detected_ids.append(hid)
+        desc_val = item["desc"]() if callable(item["desc"]) else item["desc"]
+        print(f"  [{idx}] {hid:<16} - {item['name']} ({desc_val}) {status}")
 
-    print("  [a] all             - Force configure all harnesses")
-    print("  [n] none            - Skip harness configuration")
+    print("  [a]  all              - Force configure all harnesses")
+    print("  [n]  none             - Skip harness configuration")
 
-    if detected_keys:
-        default_label = f"detected only ({', '.join(detected_keys)})"
+    if detected_ids:
+        default_label = f"detected only ({', '.join(detected_ids)})"
     else:
         default_label = "none"
 
@@ -186,25 +412,26 @@ def ask_user_choices(detected: dict) -> list[str]:
         print("\nSkipping harness configuration.")
         return []
 
-    # If user pressed enter, default to detected only
     if not choice:
-        return detected_keys
+        return detected_ids
 
     choice_lower = choice.lower()
     if choice_lower in ("a", "all"):
-        return harnesses
+        return [item["id"] for item in HARNESS_REGISTRY]
     if choice_lower in ("n", "none"):
         return []
 
     selected = []
     tokens = [t.strip() for t in choice.replace(",", " ").split()]
     for t in tokens:
-        if t == "1" or t.lower() == "opencode":
-            selected.append("opencode")
-        elif t == "2" or t.lower() == "claude":
-            selected.append("claude")
-        elif t == "3" or t.lower() == "claude-desktop":
-            selected.append("claude-desktop")
+        if t.isdigit():
+            idx = int(t) - 1
+            if 0 <= idx < len(HARNESS_REGISTRY):
+                selected.append(HARNESS_REGISTRY[idx]["id"])
+        else:
+            for item in HARNESS_REGISTRY:
+                if t.lower() == item["id"]:
+                    selected.append(item["id"])
 
     return list(dict.fromkeys(selected))
 
@@ -218,7 +445,7 @@ def run_init(target_harness: str = None):
     # 1. Write config.toml if missing
     config_file = config_dir / "config.toml"
     if not config_file.exists():
-        config_file.write_text(SAMPLE_CONFIG)
+        config_file.write_text(SAMPLE_CONFIG, encoding="utf-8")
         if os.name == "posix":
             config_file.chmod(0o600)
         print(f"✓ Created template config: {config_file}")
@@ -231,34 +458,31 @@ def run_init(target_harness: str = None):
     if bundled_instructions.exists():
         shutil.copy2(bundled_instructions, instructions_file)
     else:
-        instructions_file.write_text(DEFAULT_INSTRUCTIONS)
+        instructions_file.write_text(DEFAULT_INSTRUCTIONS, encoding="utf-8")
     print(f"✓ Installed instructions: {instructions_file}")
 
-    # 3. Determine which harnesses to install
-    detected = detect_harnesses()
+    # 3. Detect installed harnesses
+    detected_map = {item["id"]: item["detect"]() for item in HARNESS_REGISTRY}
+
     if target_harness:
         target = target_harness.lower()
         if target == "all":
-            targets = ["opencode", "claude", "claude-desktop"]
+            targets = [item["id"] for item in HARNESS_REGISTRY]
         elif target == "none":
             targets = []
         else:
             targets = [t.strip() for t in target.split(",") if t.strip()]
     else:
-        # If running in non-interactive environment (pipes/ci)
         if not sys.stdin.isatty():
-            targets = [k for k in detected.keys() if k in ("opencode", "claude", "claude-desktop")]
+            targets = [hid for hid, detected in detected_map.items() if detected]
         else:
-            targets = ask_user_choices(detected)
+            targets = ask_user_choices(detected_map)
 
     print("\nApplying configuration to selected harnesses:")
+    handler_map = {item["id"]: item["install"] for item in HARNESS_REGISTRY}
     for t in targets:
-        if t == "opencode":
-            install_opencode(instructions_file)
-        elif t == "claude":
-            install_claude_cli()
-        elif t == "claude-desktop":
-            install_claude_desktop()
+        if t in handler_map:
+            handler_map[t](instructions_file)
         else:
             print(f"  ? Unknown harness: {t}")
 
