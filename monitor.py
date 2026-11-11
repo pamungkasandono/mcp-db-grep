@@ -83,11 +83,17 @@ async def handle(reader, writer):
             m = json.loads(line)
             now = datetime.now().strftime("%H:%M:%S")
             db_label = m.get("db", "")
-            if db_label and m.get("db_type"):
-                db_type = "pgsql" if m["db_type"] == "postgres" else m["db_type"]
-                db = f" @ {clean(db_type)}:{clean(db_label)}"
-            elif db_label:
-                db = f" @ {clean(db_label)}"
+            if db_label:
+                # If db_label already contains type prefix (e.g. 'postgres:bekal-akun'), normalize display
+                if ":" in db_label:
+                    d_type, d_name = db_label.split(":", 1)
+                    disp_type = "pgsql" if d_type in ("postgres", "pgsql") else d_type
+                    db = f" @ {clean(disp_type)}:{clean(d_name)}"
+                elif m.get("db_type"):
+                    disp_type = "pgsql" if m["db_type"] in ("postgres", "pgsql") else m["db_type"]
+                    db = f" @ {clean(disp_type)}:{clean(db_label)}"
+                else:
+                    db = f" @ {clean(db_label)}"
             else:
                 db = ""
             head = f"\n{Y}━━ {now}{N} {t} {Y}{m.get('tool', '')}{db}"

@@ -28,16 +28,38 @@ def read_config():
 
 
 def databases():
-    dbs = read_config().get("db", {})
-    if not dbs:
-        raise ValueError(f"No [db.<name>] found in {CONFIG}")
-    for name, c in dbs.items():
-        if c.get("type") not in DRIVERS:
-            raise ValueError(f"[db.{name}] type must be one of: {', '.join(DRIVERS)}")
-        for key in ("dsn", "user") if c["type"] == "oracle" else ("dsn",):
-            if not c.get(key):
-                raise ValueError(f"[db.{name}] missing required field '{key}'")
-    return dbs
+    raw_db = read_config().get("db", {})
+    if not raw_db:
+        raise ValueError(f"No [db.<driver>.<name>] found in {CONFIG}")
+
+    normalized = {}
+    for driver_type, table in raw_db.items():
+        if not isinstance(table, dict):
+            continue
+
+        if driver_type not in DRIVERS:
+            raise ValueError(
+                f"Unknown driver '[db.{driver_type}]'. Driver must be one of: {', '.join(DRIVERS)}. "
+                f"Format required: [db.<driver>.<name>]"
+            )
+
+        for name, sub_cfg in table.items():
+            if not isinstance(sub_cfg, dict):
+                continue
+            cfg = dict(sub_cfg)
+            cfg["type"] = driver_type
+            composite_key = f"{driver_type}:{name}"
+            normalized[composite_key] = cfg
+
+    if not normalized:
+        raise ValueError(f"No valid [db.<driver>.<name>] configurations found in {CONFIG}")
+
+    for key, c in normalized.items():
+        for req_key in ("dsn", "user") if c["type"] == "oracle" else ("dsn",):
+            if not c.get(req_key):
+                raise ValueError(f"Database [{key}] missing required field '{req_key}'")
+
+    return normalized
 
 
 def password(c):
@@ -140,15 +162,49 @@ DRIVERS = {"postgres": Postgres, "oracle": Oracle}
 conns: dict[str, DB] = {}
 
 
-def get_db(name):
+def resolve_db_key(requested_name: str, cfgs: dict) -> str:
+    # 1. Exact match (e.g. "postgres:bekal-akun" or traditional "kala-studio")
+    if requested_name in cfgs:
+        return requested_name
+
+    # 2. Check if requested name matches an unqualified short name
+    # e.g. requested "bekal-akun" matching "postgres:bekal-akun"
+    matches = [k for k in cfgs if k.endswith(f":{requested_name}")]
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        raise ValueError(
+            f"Database name '{requested_name}' is ambiguous across multiple types: {', '.join(matches)}. "
+            f"Specify the type prefix explicitly (e.g. '{matches[0]}')."
+        )
+
+    # 3. Handle pgsql: alias to postgres:
+    if requested_name.startswith("pgsql:"):
+        aliased = f"postgres:{requested_name[6:]}"
+        if aliased in cfgs:
+            return aliased
+
+    available = []
+    for k in cfgs:
+        available.append(k)
+        if ":" in k:
+            short = k.split(":", 1)[1]
+            if short not in available:
+                available.append(short)
+
+    raise ValueError(f"db '{requested_name}' does not exist. Available choices: {', '.join(available)}")
+
+
+def get_db(name: str):
     cfgs = databases()  # reloaded on each call: config updates apply immediately
-    if name not in cfgs:
-        raise ValueError(f"db '{name}' does not exist. Available choices: {', '.join(cfgs)}")
-    cur = conns.get(name)
-    if cur is None or cur.cfg != cfgs[name]:
+    resolved_key = resolve_db_key(name, cfgs)
+    cfg = cfgs[resolved_key]
+
+    cur = conns.get(resolved_key)
+    if cur is None or cur.cfg != cfg:
         if cur:
             cur.close()
-        cur = conns[name] = DRIVERS[cfgs[name]["type"]](name, cfgs[name])
+        cur = conns[resolved_key] = DRIVERS[cfg["type"]](resolved_key, cfg)
     return cur
 
 
@@ -320,8 +376,30 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
 @mcp.tool()
 async def list_databases() -> str:
     """List available database connections (name, type, description). Does not access databases."""
-    out = [{"db": n, "type": c["type"], "description": c.get("description", "")}
-           for n, c in databases().items()]
+    all_dbs = databases()
+    
+    # Check for short name collisions
+    short_names = {}
+    for key in all_dbs:
+        short = key.split(":", 1)[1] if ":" in key else key
+        short_names.setdefault(short, []).append(key)
+
+    out = []
+    for key, c in all_dbs.items():
+        short = key.split(":", 1)[1] if ":" in key else key
+        # If collision exists for this short name, present the full qualified name as primary
+        effective_name = key if len(short_names.get(short, [])) > 1 else short
+        aliases = [key] if effective_name != key else ([short] if short != key else [])
+        
+        item = {
+            "db": effective_name,
+            "type": c["type"],
+            "description": c.get("description", ""),
+        }
+        if aliases:
+            item["aliases"] = aliases
+        out.append(item)
+
     audit("list_databases")
     return json.dumps(out)
 

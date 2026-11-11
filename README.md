@@ -59,20 +59,28 @@ Edit `~/.config/db-grep/config.toml`:
 [monitor]
 port = 48260  # unique safe port (auto-fallback across 48260-48270 if busy)
 
-[db.my-postgres]
-type = "postgres"
+# Postgres: [db.postgres.<name>]
+[db.postgres.my-postgres]
 description = "Main application database"
 dsn = "postgres://user@localhost:5432/my_db"
 password = "your_password"
 
-# Oracle example:
-# [db.my-oracle]
-# type = "oracle"
-# description = "Company Oracle DB"
-# dsn = "host:1521/SERVICE_NAME"
-# user = "ro_user"
-# password_env = "ORACLE_PW"
+# Oracle: [db.oracle.<name>]
+[db.oracle.legacy-oracle]
+description = "Company Oracle DB"
+dsn = "host:1521/SERVICE_NAME"
+user = "ro_user"
+password_env = "ORACLE_PW"
+
+# Multiple databases with the same name across different types work cleanly:
+[db.postgres.company-core]
+dsn = "postgres://user@localhost:5432/company"
+
+[db.oracle.company-core]
+dsn = "host:1521/SERVICE_NAME"
+user = "ro_user"
 ```
+*(When identical names exist across types, AI can address them by type prefix e.g. `postgres:company-core` or `oracle:company-core`).*
 
 ---
 

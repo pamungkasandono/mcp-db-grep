@@ -51,16 +51,14 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 SAMPLE_CONFIG = """[monitor]
 port = 48260
 
-# Example Postgres Connection:
-# [db.my-app]
-# type = "postgres"
+# Postgres Connection:
+# [db.postgres.my-app]
 # description = "Main application database"
 # dsn = "postgres://user@localhost:5432/my_app"
 # password_env = "MY_APP_PW"  # or: password = "plain_password"
 
-# Example Oracle Connection:
-# [db.legacy-db]
-# type = "oracle"
+# Oracle Connection:
+# [db.oracle.legacy-db]
 # description = "Corporate Oracle database"
 # dsn = "host:1521/SERVICE_NAME"
 # user = "ro_user"

@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
+
 ### Added
+- Driver-scoped database tables (`[db.<driver>.<name>]`) supporting identical database names across different database types without TOML key collisions.
+- Dual-lookup resolver supporting both exact `type:name` and unique short `name` with helpful collision warnings.
+- Extended `list_databases` tool to automatically surface type-prefixed keys when name collisions exist.
 - Automated unit test suite under `tests/` covering CLI flags, port fallback, server logic, and multi-harness installer.
 - Added `just test` runner command using Python stdlib `unittest`.
 - Dynamic port fallback across safe private range `48260`–`48270` when preferred port is occupied.
