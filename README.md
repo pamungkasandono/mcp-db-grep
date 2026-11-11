@@ -2,65 +2,99 @@
 
 Database MCP server with interactive approval monitor for AI assistants.
 
-## Instalasi & Setup Otomatis
+---
+
+## Why db-grep?
+
+AI coding assistants can silently run queries and read your database without you knowing what data was fetched.
+
+**db-grep stops blind database access.**
+
+Every database request goes to a separate terminal monitor. You see the exact SQL query, target database, and context. You press `y` to allow or `n` to reject before any data enters the AI context.
+
+If you reject (`n`), the AI stops immediately, tells you which query was rejected, and explains why that data was needed.
+
+---
+
+## Quick Start (3 Steps)
 
 ### 1. Install CLI
 ```bash
 pip install git+https://github.com/pamungkasandono/mcp-db-grep.git
 ```
-*(atau menggunakan `pipx install git+...` / `uv tool install git+...`)*
+*(or use `pipx install git+...` / `uv tool install git+...`)*
 
-### 2. Inisialisasi & Hubungkan ke AI Client (Interactive Setup)
-Cukup jalankan:
+### 2. Run Setup
 ```bash
 db-grep --init
 ```
-Perintah ini akan:
-- Mendeteksi harness/klien AI yang terpasang di komputer Anda (`opencode`, `claude` CLI, `claude-desktop`).
-- Menanyakan pilihan harness yang ingin Anda hubungkan secara interaktif (bisa pilih salah satu atau semua).
-- Menginstal aturan instruksi (`~/.config/db-grep/instructions.md`) agar AI berhenti dan menjelaskan tujuan query saat Anda menekan `n` (tolak) di monitor.
-- Membuat template konfigurasi di `~/.config/db-grep/config.toml`.
+This command will:
+- Detect your AI client (`opencode`, `claude` CLI, `claude-desktop`).
+- Ask which client to connect.
+- Install safety rules so AI stops and explains when queries are rejected.
+- Create config file at `~/.config/db-grep/config.toml`.
 
-*Tips: Jika ingin otomatis tanpa prompt interaktif:*
+*Non-interactive shortcut:*
 ```bash
-db-grep --init --client opencode   # hanya untuk Opencode
-db-grep --init --client claude     # hanya untuk Claude Code CLI
-db-grep --init --client all        # untuk semua klien yang terdeteksi
+db-grep --init --client opencode   # configure only Opencode
+db-grep --init --client claude     # configure only Claude Code CLI
+db-grep --init --client all        # configure all detected clients
 ```
 
----
-
-## Konfigurasi Database
-Edit file `~/.config/db-grep/config.toml` (chmod 600):
+### 3. Add Your Database
+Edit `~/.config/db-grep/config.toml`:
 ```toml
 [monitor]
 port = 8765
 
-[db.bekal-akun]
+[db.my-postgres]
 type = "postgres"
-description = "Database Akun Bekal"
-dsn = "postgres://postgres@localhost:5432/bekal"
+description = "Main application database"
+dsn = "postgres://user@localhost:5432/my_db"
 password = "your_password"
+
+# Oracle example:
+# [db.my-oracle]
+# type = "oracle"
+# description = "Company Oracle DB"
+# dsn = "host:1521/SERVICE_NAME"
+# user = "ro_user"
+# password_env = "ORACLE_PW"
 ```
 
 ---
 
-## Cara Pakai
+## Daily Usage
 
-1. **Jalankan Monitor (di terminal terpisah sebelum chat AI):**
+1. **Terminal 1: Start Monitor**
    ```bash
    db-grep --monitor
    ```
+   Keep this terminal open while working.
 
-2. **Gunakan di Chat AI (Opencode / Claude):**
-   Minta AI membaca database seperti biasa:
-   > *"Tampilkan 5 user terbaru dari database bekal-akun"*
-   
-   Saat query butuh izin, terminal monitor akan meminta konfirmasi `[y/n]`. Jika Anda tolak (`n`), AI akan berhenti dan menjelaskan untuk apa query tersebut.
+2. **Terminal 2: Use Your AI Assistant**
+   ```bash
+   opencode
+   # or
+   claude
+   ```
+   Ask questions about your data as usual:
+   > *"Show me 5 latest active users from my-postgres"*
+
+3. **Approve or Reject in Terminal 1:**
+   ```text
+   ━━ 14:10:05 [A] query @ pgsql:my-postgres ━━
+   my-project · get latest users
+   SELECT id, username, email FROM users LIMIT 5;
+   Allow? [y/n]
+   ```
+   - Press **`y`**: Query runs, result table is displayed, rows are sent to AI.
+   - Press **`n`**: Query cancelled, AI stops and explains why the query was needed.
 
 ---
 
-## Pengembangan Lokal (Contributor)
+## Local Development
+
 ```bash
 python3 -m venv .venv
 pip install -e .
@@ -68,10 +102,5 @@ just monitor
 just server
 ```
 
-## Standar Pengembangan
-- **Commit**: Mengikuti [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
-- **Changelog**: Mengikuti [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-- **Versioning**: Mengikuti [Semantic Versioning 2.0.0](https://semver.org/).
-
-## Lisensi
+## License
 MIT

@@ -6,23 +6,23 @@ from typing import Annotated
 from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 
-logging.basicConfig(stream=sys.stderr)  # stdout dipakai protokol stdio
+logging.basicConfig(stream=sys.stderr)  # stdout is reserved for stdio MCP protocol
 log = logging.getLogger("db-grep")
 
 CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
 AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
 
 Konteks = Annotated[str, Field(
-    description="Wajib. Format '<nama-project> · <aksi>', contoh 'bekal-akun · ambil sample data siswa'")]
-DbName = Annotated[str, Field(description="Nama koneksi database. Lihat list_databases.")]
+    description="Required. Format '<project-name> · <action>', example 'bekal-akun · fetch student sample data'")]
+DbName = Annotated[str, Field(description="Database connection name. See list_databases.")]
 
 
 # ---------- config ----------
 def read_config():
     if not CONFIG.exists():
-        raise ValueError(f"Config tidak ditemukan: {CONFIG}")
+        raise ValueError(f"Config not found: {CONFIG}")
     if os.name == "posix" and CONFIG.stat().st_mode & 0o077:
-        log.warning("Jalankan: chmod 600 %s (file berisi kredensial)", CONFIG)
+        log.warning("Run: chmod 600 %s (file contains credentials)", CONFIG)
     with open(CONFIG, "rb") as f:
         return tomllib.load(f)
 
@@ -30,13 +30,13 @@ def read_config():
 def databases():
     dbs = read_config().get("db", {})
     if not dbs:
-        raise ValueError(f"Tidak ada [db.<nama>] di {CONFIG}")
+        raise ValueError(f"No [db.<name>] found in {CONFIG}")
     for name, c in dbs.items():
         if c.get("type") not in DRIVERS:
-            raise ValueError(f"[db.{name}] type harus salah satu: {', '.join(DRIVERS)}")
+            raise ValueError(f"[db.{name}] type must be one of: {', '.join(DRIVERS)}")
         for key in ("dsn", "user") if c["type"] == "oracle" else ("dsn",):
             if not c.get(key):
-                raise ValueError(f"[db.{name}] wajib punya '{key}'")
+                raise ValueError(f"[db.{name}] missing required field '{key}'")
     return dbs
 
 
@@ -45,7 +45,7 @@ def password(c):
         return c["password"]
     env = c.get("password_env")
     if env and env not in os.environ:
-        raise ValueError(f"Env var {env} belum diset (dibutuhkan koneksi ini)")
+        raise ValueError(f"Env var {env} is not set (required by this connection)")
     return os.environ.get(env, "") if env else ""
 
 
@@ -65,8 +65,8 @@ class DB:
             return self._exec(sql, params)
         except Exception:
             if self.healthy():
-                raise  # error SQL biasa
-            self.close()  # koneksi mati: sambung ulang, coba sekali lagi
+                raise  # standard SQL error
+            self.close()  # connection dropped: reconnect and retry once
             self.connect()
             return self._exec(sql, params)
 
@@ -125,7 +125,7 @@ class Oracle(DB):
     def _exec(self, sql, params):
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SET TRANSACTION READ ONLY")  # lapisan tambahan; grant SELECT tetap utama
+                cur.execute("SET TRANSACTION READ ONLY")  # extra layer; read-only grant is primary
                 cur.execute(sql, params)
                 cols = [d[0] for d in cur.description]
                 return cols, cur.fetchmany(self.max_rows)
@@ -141,9 +141,9 @@ conns: dict[str, DB] = {}
 
 
 def get_db(name):
-    cfgs = databases()  # dibaca ulang: perubahan config langsung berlaku
+    cfgs = databases()  # reloaded on each call: config updates apply immediately
     if name not in cfgs:
-        raise ValueError(f"db '{name}' tidak ada. Pilihan: {', '.join(cfgs)}")
+        raise ValueError(f"db '{name}' does not exist. Available choices: {', '.join(cfgs)}")
     cur = conns.get(name)
     if cur is None or cur.cfg != cfgs[name]:
         if cur:
@@ -152,7 +152,7 @@ def get_db(name):
     return cur
 
 
-# ---------- koneksi ke monitor (satu per sesi Claude) ----------
+# ---------- connection to monitor (one link per client session) ----------
 class Link:
     reader = writer = None
     session = "?"
@@ -181,9 +181,9 @@ lock = asyncio.Lock()
 @asynccontextmanager
 async def lifespan(server):
     try:
-        await link.ensure()  # daftar ke monitor begitu Claude dibuka
+        await link.ensure()  # register to monitor when client opens
     except (OSError, asyncio.TimeoutError, ValueError):
-        pass  # monitor belum nyala: coba lagi di request pertama
+        pass  # monitor offline: retry on first tool call
     yield
 
 
@@ -201,20 +201,20 @@ def audit(event, **kw):
 def check_konteks(k):
     k = re.sub(r"[\x00-\x1f\x7f]", "", k or "").strip()[:80]
     if "·" not in k:
-        raise ValueError("konteks wajib berformat '<nama-project> · <aksi>', "
-                         "contoh 'bekal-akun · ambil sample data siswa'")
+        raise ValueError("konteks must be in format '<project-name> · <action>', "
+                         "example 'bekal-akun · fetch student sample data'")
     return k
 
 
-# ---------- gerbang persetujuan ----------
+# ---------- approval gate ----------
 async def execute(tool, d, konteks, sql, params=(), reject=None):
     konteks = check_konteks(konteks)
     async with lock:
         try:
-            await link.ensure()  # menyambung ulang otomatis kalau monitor sempat restart
+            await link.ensure()  # auto-reconnect if monitor restarted
         except (OSError, asyncio.TimeoutError):
             audit("denied", reason="monitor offline", db=d.name, konteks=konteks, sql=sql)
-            raise RuntimeError("Monitor offline. Jalankan `python monitor.py` di terminal lain.")
+            raise RuntimeError("Monitor offline. Run `db-grep --monitor` in another terminal.")
 
         audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
         try:
@@ -222,14 +222,14 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             if reject:
                 await link.send({"type": "blocked", "reason": reject, **msg})
                 audit("blocked", reason=reject)
-                raise ValueError(f"Ditolak: {reject}")
+                raise ValueError(f"Rejected: {reject}")
 
             await link.send({"type": "request", "params": params, **msg})
-            line = await link.reader.readline()  # kedaluwarsa ditentukan monitor
+            line = await link.reader.readline()  # timeout is managed by monitor
             if not line:
                 link.drop()
-                audit("denied", reason="monitor terputus")
-                raise PermissionError("Monitor terputus saat menunggu persetujuan")
+                audit("denied", reason="monitor disconnected")
+                raise PermissionError("Monitor disconnected while waiting for approval")
             if not json.loads(line)["approved"]:
                 audit("denied", reason="user")
                 raise PermissionError(
@@ -246,19 +246,19 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 await link.send({"type": "error", "message": str(e)})
                 raise
             ms = int((time.monotonic() - t0) * 1000)
-            audit("executed", rows=len(rows), ms=ms)  # isi data sengaja tidak di-log
+            audit("executed", rows=len(rows), ms=ms)  # query data itself is never logged
             await link.send({"type": "result", "cols": cols, "rows": rows,
                              "ms": ms, "limit": d.max_rows})
             return json.dumps([dict(zip(cols, r)) for r in rows], default=str)
         except (asyncio.CancelledError, ConnectionError):
-            link.drop()  # jawaban basi tidak boleh terbaca request berikutnya
+            link.drop()  # stale responses must not be read by subsequent requests
             raise
 
 
 # ---------- tools ----------
 @mcp.tool()
 async def list_databases() -> str:
-    """Daftar koneksi database yang tersedia (nama, tipe, deskripsi). Tidak mengakses DB."""
+    """List available database connections (name, type, description). Does not access databases."""
     out = [{"db": n, "type": c["type"], "description": c.get("description", "")}
            for n, c in databases().items()]
     audit("list_databases")
@@ -267,29 +267,29 @@ async def list_databases() -> str:
 
 @mcp.tool()
 async def list_tables(db: DbName, konteks: Konteks, schema: str = "") -> str:
-    """Daftar tabel di sebuah schema (default: schema bawaan koneksi). Perlu persetujuan user."""
+    """List table names in a schema (default: connection default schema). Requires user approval."""
     d = get_db(db)
     return await execute("list_tables", d, konteks, d.LIST_SQL, (schema or d.default_schema,))
 
 
 @mcp.tool()
 async def describe_table(db: DbName, table: str, konteks: Konteks, schema: str = "") -> str:
-    """Kolom, tipe data, dan nullable sebuah tabel. Perlu persetujuan user."""
+    """Columns, data types, and nullability of a table. Requires user approval."""
     d = get_db(db)
     return await execute("describe_table", d, konteks, d.DESC_SQL, (schema or d.default_schema, table))
 
 
 @mcp.tool()
 async def query(db: DbName, sql: str, konteks: Konteks) -> str:
-    """Jalankan SELECT read-only, baris dibatasi per koneksi. Perlu persetujuan user."""
+    """Execute read-only SELECT query, rows capped per connection. Requires user approval."""
     d = get_db(db)
-    reject = None if sql.lstrip().lower().startswith(("select", "with")) else "bukan SELECT/WITH"
+    reject = None if sql.lstrip().lower().startswith(("select", "with")) else "only SELECT/WITH queries allowed"
     return await execute("query", d, konteks, sql, (), reject)
 
 
 def start():
     try:
-        databases()  # config rusak = gagal jelas saat start
+        databases()  # invalid config fails fast on startup
     except ValueError as e:
         sys.exit(str(e))
     mcp.run()
