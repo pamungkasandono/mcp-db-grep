@@ -28,6 +28,8 @@ class TestCli(unittest.TestCase):
         self.assertIn("--init", res.stdout)
         self.assertIn("--check-config", res.stdout)
         self.assertIn("--check-connection", res.stdout)
+        self.assertIn("--check-update", res.stdout)
+        self.assertIn("--upgrade", res.stdout)
         self.assertIn("--client", res.stdout)
         self.assertIn("claude", res.stdout)
         self.assertIn("antigravity", res.stdout)

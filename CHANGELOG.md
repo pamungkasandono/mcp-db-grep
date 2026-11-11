@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
 
 ### Added
+- `--check-connection` multi-target execution accepting multiple database names separated by spaces in a single command.
+- `--check-update` and `--upgrade` CLI flags to inspect GitHub releases and upgrade in place.
+- Direct one-liner install and initialize instructions in `README.md`.
+- Comprehensive uninstall instructions in `README.md`.
 - Diagnostic tools `check_config` and `check_connection` available as MCP tools and CLI flags (`--check-config` and `--check-connection`).
 - Interactive CLI connection tester with flexible index, comma, and range selection syntax (`1`, `1,3`, `1-3`, `all`).
 - Explicit ping queries (`SELECT 1;` for Postgres, `SELECT 1 FROM DUAL` for Oracle) running without monitor approval blocking.

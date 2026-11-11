@@ -18,21 +18,13 @@ If you reject (`n`), the AI stops immediately, tells you which query was rejecte
 
 ## Quick Start (3 Steps)
 
-### 1. Install CLI
+### 1. Install & Initialize in One Step
 ```bash
-pip install git+https://github.com/pamungkasandono/mcp-db-grep.git
+pip install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep --init
 ```
-*(or use `pipx install git+...` / `uv tool install git+...`)*
+*(or via `pipx`: `pipx install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep --init`)*
 
-### 2. Run Setup
-```bash
-db-grep --init
-```
-This command will:
-- Detect your AI coding assistants on your system.
-- Ask which harness to connect (`[default: detected only]`).
-- Install safety rules so AI stops and explains when queries are rejected.
-- Create config file at `~/.config/db-grep/config.toml`.
+This will install the tool and immediately prompt you to select your AI coding assistant.
 
 **Supported AI Clients & Harnesses:**
 1. **Claude Code CLI** (`claude mcp add`)
@@ -53,7 +45,7 @@ db-grep --init --client cursor        # configure Cursor
 db-grep --init --client all           # configure all harnesses
 ```
 
-### 3. Add Your Database
+### 2. Add Your Database
 Edit `~/.config/db-grep/config.toml`:
 ```toml
 [monitor]
@@ -137,6 +129,40 @@ db-grep --check-connection postgres:company-core,oracle:company-core
 
 *Forgot to start the monitor?*
 Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep --monitor`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
+
+---
+
+## Updates & Upgrades
+
+Check for latest releases and changelog directly from your terminal:
+```bash
+db-grep --check-update
+```
+Or upgrade immediately:
+```bash
+db-grep --upgrade
+```
+
+---
+
+## Uninstall
+
+To cleanly remove `db-grep` from your system:
+
+1. **Remove package:**
+   ```bash
+   pip uninstall db-grep
+   # or: pipx uninstall db-grep
+   ```
+
+2. **Clean configuration, instructions, and audit logs (optional):**
+   ```bash
+   rm -rf ~/.config/db-grep
+   ```
+
+3. **Unregister MCP from clients (if applicable):**
+   - Claude Code CLI: `claude mcp remove db`
+   - Other clients: Remove the `"db"` block from their config file (`mcp.json`, `mcp_config.json`, etc.)
 
 ---
 

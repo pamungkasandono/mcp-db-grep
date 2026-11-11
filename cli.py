@@ -83,7 +83,7 @@ def run_check_config_cli():
         sys.exit(1)
 
 
-def run_check_connection_cli(target: str):
+def run_check_connection_cli(targets: list[str] | str):
     import server
 
     try:
@@ -97,9 +97,16 @@ def run_check_connection_cli(target: str):
         print("No databases configured in config.toml")
         sys.exit(0)
 
+    # Normalize targets to list of strings
+    if isinstance(targets, str):
+        target_list = [targets]
+    else:
+        target_list = list(targets)
+
     selected_keys = []
 
-    if target == "INTERACTIVE":
+    # If no targets passed, enter interactive selection
+    if not target_list:
         print("\n--- db-grep Interactive Connection Check ---")
         print("Available Databases:")
         for idx, key in enumerate(db_keys, start=1):
@@ -127,11 +134,14 @@ def run_check_connection_cli(target: str):
                 print("No valid database index selected.")
                 sys.exit(1)
             selected_keys = [db_keys[i] for i in indices]
-    elif target.lower() in ("all", "*"):
+    elif len(target_list) == 1 and target_list[0].lower() in ("all", "*"):
         selected_keys = db_keys
     else:
-        # Resolve target token(s)
-        tokens = [t.strip() for t in target.replace(",", " ").split() if t.strip()]
+        # Flatten all tokens across multiple positional items and comma separations
+        tokens = []
+        for item in target_list:
+            tokens.extend([t.strip() for t in item.replace(",", " ").split() if t.strip()])
+
         for t in tokens:
             resolved = server.resolve_db_key(t, all_dbs)
             if resolved not in selected_keys:
@@ -187,9 +197,19 @@ def main():
     )
     group.add_argument(
         "--check-connection",
-        nargs="?",
-        const="INTERACTIVE",
-        help="Test physical database connectivity ('all', database name, comma-separated names, or interactive selection)",
+        nargs="*",
+        metavar="DB",
+        help="Test physical database connectivity (no args = interactive, or pass 'all', or multiple DB names separated by spaces)",
+    )
+    group.add_argument(
+        "--check-update",
+        action="store_true",
+        help="Check for latest releases and changelog on GitHub",
+    )
+    group.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Upgrade db-grep to the latest version from GitHub",
     )
 
     parser.add_argument(
@@ -225,6 +245,12 @@ def main():
         run_check_config_cli()
     elif args.check_connection is not None:
         run_check_connection_cli(args.check_connection)
+    elif args.check_update:
+        import updater
+        updater.run_check_update_cli(prompt_upgrade=True)
+    elif args.upgrade:
+        import updater
+        updater.execute_upgrade()
     else:
         print(f"db-grep v{__version__}\n")
         parser.print_help()
