@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Extended multi-harness installer support to 9 AI coding clients in structured order:
+  1. Claude Code CLI
+  2. Claude Desktop
+  3. OpenCode
+  4. Antigravity (`~/.gemini/config/mcp_config.json`)
+  5. Cursor (`~/.cursor/mcp.json`)
+  6. Codex CLI (`~/.codex/config.toml`)
+  7. Roo Code (VS Code Extension `cline_mcp_settings.json`)
+  8. Zed Editor (`settings.json`)
+  9. Pi Coding Agent (`~/.pi/agent/mcp.json`)
+- Smart selection logic in `db-grep --init` defaulting only to detected harnesses.
+- Non-interactive flag `--client` supporting all 9 harness identifiers.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added
