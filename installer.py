@@ -45,6 +45,17 @@ port = 8765
 """
 
 
+def get_claude_desktop_config_path() -> Path:
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
+        return base / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "darwin":
+        return Path("~/Library/Application Support/Claude/claude_desktop_config.json").expanduser()
+    else:
+        return Path("~/.config/Claude/claude_desktop_config.json").expanduser()
+
+
 def detect_harnesses():
     detected = {}
 
@@ -58,14 +69,10 @@ def detect_harnesses():
         detected["claude"] = "Claude Code CLI detected"
 
     # Claude Desktop
-    claude_desktop_cfg = Path("~/.config/Claude/claude_desktop_config.json").expanduser()
-    if claude_desktop_cfg.parent.exists():
+    claude_desktop_cfg = get_claude_desktop_config_path()
+    # Check if config file exists or parent app directory exists
+    if claude_desktop_cfg.exists() or claude_desktop_cfg.parent.exists():
         detected["claude-desktop"] = str(claude_desktop_cfg)
-
-    # Cursor
-    cursor_dir = Path("~/.cursor").expanduser()
-    if cursor_dir.exists():
-        detected["cursor"] = str(cursor_dir)
 
     return detected
 
@@ -124,7 +131,7 @@ def install_claude_cli():
 
 
 def install_claude_desktop():
-    cfg_file = Path("~/.config/Claude/claude_desktop_config.json").expanduser()
+    cfg_file = get_claude_desktop_config_path()
     cfg_file.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     if cfg_file.exists():
@@ -147,29 +154,46 @@ def install_claude_desktop():
 
 
 def ask_user_choices(detected: dict) -> list[str]:
-    print("\nDetected AI clients / harnesses on your system:")
-    all_options = ["opencode", "claude", "claude-desktop", "all", "none"]
+    print("\nSupported AI clients / harnesses:")
+    harnesses = ["opencode", "claude", "claude-desktop"]
     descriptions = {
         "opencode": "Opencode CLI (~/.config/opencode)",
         "claude": "Claude Code CLI (`claude mcp add`)",
-        "claude-desktop": "Claude Desktop App (~/.config/Claude/claude_desktop_config.json)",
-        "all": "Configure all supported harnesses",
-        "none": "Skip harness configuration (only generate config and instructions)",
+        "claude-desktop": f"Claude Desktop App ({get_claude_desktop_config_path()})",
     }
 
-    for idx, opt in enumerate(all_options, start=1):
-        status = " (detected)" if opt in detected else ""
-        print(f"  [{idx}] {opt:<15} - {descriptions[opt]}{status}")
+    detected_keys = [k for k in harnesses if k in detected]
+    detected_indices = []
+
+    for idx, key in enumerate(harnesses, start=1):
+        is_detected = key in detected
+        status = "(detected)" if is_detected else "(not installed)"
+        if is_detected:
+            detected_indices.append(str(idx))
+        print(f"  [{idx}] {key:<15} - {descriptions[key]} {status}")
+
+    print("  [a] all             - Force configure all harnesses")
+    print("  [n] none            - Skip harness configuration")
+
+    if detected_keys:
+        default_label = f"detected only ({', '.join(detected_keys)})"
+    else:
+        default_label = "none"
 
     try:
-        choice = input("\nSelect harness to configure [default: all, e.g. 1, 2 or 'all']: ").strip()
+        choice = input(f"\nSelect harness to configure [default: {default_label}]: ").strip()
     except (EOFError, KeyboardInterrupt):
         print("\nSkipping harness configuration.")
         return []
 
-    if not choice or choice.lower() in ("all", "4"):
-        return ["opencode", "claude", "claude-desktop"]
-    if choice.lower() in ("none", "5"):
+    # If user pressed enter, default to detected only
+    if not choice:
+        return detected_keys
+
+    choice_lower = choice.lower()
+    if choice_lower in ("a", "all"):
+        return harnesses
+    if choice_lower in ("n", "none"):
         return []
 
     selected = []
