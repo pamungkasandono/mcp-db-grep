@@ -132,6 +132,122 @@ dsn = "postgres://user@localhost:5432/alpha"
                 self.assertIn("db 'non-existent-db' does not exist", str(ctx.exception))
                 self.assertIn("Available choices:", str(ctx.exception))
 
+    def test_inspect_config_valid_and_missing_env(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.app]
+dsn = "postgres://user@localhost/app"
+password_env = "UNSET_TEST_ENV_VAR_123"
+
+[db.oracle.corp]
+dsn = "host/corp"
+user = "ro_user"
+password = "plain_password"
+"""
+        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
+            tmp.write(sample_toml)
+            tmp.flush()
+
+            with patch.object(server, "CONFIG", Path(tmp.name)):
+                # UNSET_TEST_ENV_VAR_123 is missing from env
+                with patch.dict("os.environ", {}, clear=True):
+                    report = server.inspect_config()
+                    self.assertFalse(report["valid"])
+                    db_names = [d["name"] for d in report["databases"]]
+                    self.assertIn("app", db_names)
+                    self.assertIn("corp", db_names)
+
+                    # Now provide the env var
+                    with patch.dict("os.environ", {"UNSET_TEST_ENV_VAR_123": "secret"}):
+                        report_ok = server.inspect_config()
+                        self.assertTrue(report_ok["valid"])
+
+    def test_check_config_mcp_tool(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.crm]
+dsn = "postgres://user@localhost/crm"
+password = "123"
+"""
+        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
+            tmp.write(sample_toml)
+            tmp.flush()
+
+            with patch.object(server, "CONFIG", Path(tmp.name)):
+                out_str = asyncio.run(server.check_config())
+                data = json.loads(out_str)
+                self.assertTrue(data["valid"])
+                self.assertEqual(data["databases"][0]["name"], "crm")
+
+    def test_ping_database_postgres_mock(self):
+        cfg = {
+            "type": "postgres",
+            "dsn": "postgres://user@localhost/test",
+            "password": "pwd",
+        }
+
+        class MockConn:
+            def cursor(self):
+                return self
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def execute(self, sql, params=()):
+                pass
+            @property
+            def description(self):
+                return [("?column?",)]
+            def fetchmany(self, size):
+                return [(1,)]
+            def close(self):
+                pass
+            @property
+            def closed(self):
+                return False
+            @property
+            def broken(self):
+                return False
+
+        with patch("psycopg.connect", return_value=MockConn()):
+            res = server.ping_database("postgres:test", cfg)
+            self.assertEqual(res["status"], "connected")
+            self.assertEqual(res["query"], "SELECT 1;")
+            self.assertIsNotNone(res["latency_ms"])
+            self.assertIsNone(res["error"])
+
+    def test_ping_database_failure_handling(self):
+        cfg = {
+            "type": "postgres",
+            "dsn": "postgres://invalid:5432/bad",
+        }
+        with patch("psycopg.connect", side_effect=Exception("Connection refused")):
+            res = server.ping_database("postgres:bad", cfg)
+            self.assertEqual(res["status"], "failed")
+            self.assertEqual(res["query"], "SELECT 1;")
+            self.assertIn("Connection refused", res["error"])
+
+    def test_check_connection_mcp_tool(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.prod]
+dsn = "postgres://localhost/prod"
+"""
+        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
+            tmp.write(sample_toml)
+            tmp.flush()
+
+            with patch.object(server, "CONFIG", Path(tmp.name)):
+                with patch.object(server, "ping_database", return_value={"db": "postgres:prod", "status": "connected", "query": "SELECT 1;", "latency_ms": 1.2, "error": None, "type": "postgres"}):
+                    out_str = asyncio.run(server.check_connection("all"))
+                    res = json.loads(out_str)
+                    self.assertEqual(len(res), 1)
+                    self.assertEqual(res[0]["status"], "connected")
+                    self.assertEqual(res[0]["query"], "SELECT 1;")
+
     def test_query_filter_rejects_non_select(self):
         sql_insert = "INSERT INTO users (name) VALUES ('alice')"
         reject = None if sql_insert.lstrip().lower().startswith(("select", "with")) else "only SELECT/WITH queries allowed"

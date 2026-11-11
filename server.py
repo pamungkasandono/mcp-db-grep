@@ -372,7 +372,175 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             raise
 
 
+# ---------- diagnostic and health inspection ----------
+PING_QUERIES = {
+    "postgres": "SELECT 1;",
+    "oracle": "SELECT 1 FROM DUAL",
+}
+
+
+def inspect_config() -> dict:
+    report = {
+        "valid": True,
+        "config_file": str(CONFIG),
+        "file_exists": CONFIG.exists(),
+        "permissions": None,
+        "monitor_port": None,
+        "databases": [],
+        "errors": [],
+        "warnings": [],
+    }
+
+    if not CONFIG.exists():
+        report["valid"] = False
+        report["errors"].append(f"Config file not found: {CONFIG}")
+        return report
+
+    if os.name == "posix":
+        mode = CONFIG.stat().st_mode & 0o777
+        report["permissions"] = oct(mode)
+        if mode & 0o077:
+            report["warnings"].append(f"File permissions ({oct(mode)}) allow other users to read credentials. Run: chmod 600 {CONFIG}")
+
+    try:
+        with open(CONFIG, "rb") as f:
+            raw_cfg = tomllib.load(f)
+    except Exception as e:
+        report["valid"] = False
+        report["errors"].append(f"TOML parse error: {e}")
+        return report
+
+    report["monitor_port"] = raw_cfg.get("monitor", {}).get("port", DEFAULT_PORT)
+    raw_dbs = raw_cfg.get("db", {})
+    if not raw_dbs:
+        report["valid"] = False
+        report["errors"].append(f"No database tables found. Format required: [db.<driver>.<name>]")
+        return report
+
+    for driver_type, table in raw_dbs.items():
+        if not isinstance(table, dict):
+            report["errors"].append(f"[db.{driver_type}] must be a table containing database definitions.")
+            report["valid"] = False
+            continue
+
+        if driver_type not in DRIVERS:
+            report["errors"].append(f"Unknown driver '[db.{driver_type}]'. Supported drivers: {', '.join(DRIVERS)}")
+            report["valid"] = False
+            continue
+
+        for db_name, cfg in table.items():
+            db_report = {
+                "name": db_name,
+                "key": f"{driver_type}:{db_name}",
+                "driver": driver_type,
+                "description": cfg.get("description", "") if isinstance(cfg, dict) else "",
+                "valid": True,
+                "errors": [],
+            }
+
+            if not isinstance(cfg, dict):
+                db_report["valid"] = False
+                db_report["errors"].append("Configuration must be a key-value table.")
+                report["databases"].append(db_report)
+                report["valid"] = False
+                continue
+
+            for req_key in ("dsn", "user") if driver_type == "oracle" else ("dsn",):
+                if not cfg.get(req_key):
+                    db_report["valid"] = False
+                    db_report["errors"].append(f"Missing required field '{req_key}'")
+
+            # Check password configuration
+            pw_env = cfg.get("password_env")
+            if pw_env:
+                if pw_env not in os.environ:
+                    db_report["valid"] = False
+                    db_report["errors"].append(f"Environment variable '{pw_env}' is not set.")
+                else:
+                    db_report["auth_source"] = f"env:{pw_env}"
+            elif cfg.get("password"):
+                db_report["auth_source"] = "config.toml"
+            else:
+                db_report["auth_source"] = "none"
+
+            if not db_report["valid"]:
+                report["valid"] = False
+
+            report["databases"].append(db_report)
+
+    return report
+
+
+def ping_database(db_key: str, cfg: dict) -> dict:
+    driver_type = cfg["type"]
+    ping_sql = PING_QUERIES.get(driver_type, "SELECT 1;")
+    result = {
+        "db": db_key,
+        "type": driver_type,
+        "query": ping_sql,
+        "status": "failed",
+        "latency_ms": None,
+        "error": None,
+    }
+
+    t0 = time.monotonic()
+    db_inst = None
+    try:
+        db_inst = DRIVERS[driver_type](db_key, cfg)
+        db_inst.connect()
+        cols, rows = db_inst.run(ping_sql)
+        ms = round((time.monotonic() - t0) * 1000, 2)
+        result["status"] = "connected"
+        result["latency_ms"] = ms
+    except Exception as e:
+        result["error"] = str(e)
+    finally:
+        if db_inst:
+            db_inst.close()
+
+    return result
+
+
+def execute_connection_check(target: str = "all") -> list[dict]:
+    all_dbs = databases()
+    targets_to_check = []
+
+    target_str = (target or "all").strip()
+    if target_str.lower() in ("all", "*"):
+        targets_to_check = list(all_dbs.keys())
+    else:
+        # Support comma or space separated names
+        tokens = [t.strip() for t in re.split(r"[,;\s]+", target_str) if t.strip()]
+        for token in tokens:
+            resolved = resolve_db_key(token, all_dbs)
+            if resolved not in targets_to_check:
+                targets_to_check.append(resolved)
+
+    results = []
+    for key in targets_to_check:
+        res = ping_database(key, all_dbs[key])
+        results.append(res)
+
+    audit("check_connection", targets=targets_to_check, count=len(results))
+    return results
+
+
 # ---------- tools ----------
+@mcp.tool()
+async def check_config() -> str:
+    """Validate config.toml format, permissions, required fields, and environment variables. Does not query databases."""
+    report = inspect_config()
+    audit("check_config", valid=report["valid"])
+    return json.dumps(report, indent=2)
+
+
+@mcp.tool()
+async def check_connection(db: str = "all") -> str:
+    """Check database physical connectivity and latency using explicit health-check queries ('SELECT 1;' for Postgres, 'SELECT 1 FROM DUAL' for Oracle). Parameter 'db' can be 'all', a single database name, or comma-separated names. Does not require interactive monitor approval."""
+    results = await asyncio.to_thread(execute_connection_check, db)
+    return json.dumps(results, indent=2)
+
+
 @mcp.tool()
 async def list_databases() -> str:
     """List available database connections (name, type, description). Does not access databases."""

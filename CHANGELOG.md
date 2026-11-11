@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
 
 ### Added
+- Diagnostic tools `check_config` and `check_connection` available as MCP tools and CLI flags (`--check-config` and `--check-connection`).
+- Interactive CLI connection tester with flexible index, comma, and range selection syntax (`1`, `1,3`, `1-3`, `all`).
+- Explicit ping queries (`SELECT 1;` for Postgres, `SELECT 1 FROM DUAL` for Oracle) running without monitor approval blocking.
 - Driver-scoped database tables (`[db.<driver>.<name>]`) supporting identical database names across different database types without TOML key collisions.
 - Dual-lookup resolver supporting both exact `type:name` and unique short `name` with helpful collision warnings.
 - Extended `list_databases` tool to automatically surface type-prefixed keys when name collisions exist.

@@ -84,6 +84,30 @@ user = "ro_user"
 
 ---
 
+## Diagnostics & Health Checks
+
+### Check Configuration (`config.toml`)
+Verify file permissions, syntax, required fields, and environment variables:
+```bash
+db-grep --check-config
+```
+*(Also available as AI MCP tool `check_config`)*
+
+### Check Physical Database Connectivity
+Test database handshake and latency using lightweight ping queries (`SELECT 1;` for Postgres, `SELECT 1 FROM DUAL` for Oracle):
+```bash
+# Interactive selection (supports 1, 1,3, 1-3, or 'all'):
+db-grep --check-connection
+
+# Non-interactive CLI:
+db-grep --check-connection all
+db-grep --check-connection bekal-akun
+db-grep --check-connection postgres:company-core,oracle:company-core
+```
+*(Also available as AI MCP tool `check_connection(db="all")`. Does not require interactive monitor approval).*
+
+---
+
 ## Daily Usage
 
 1. **Terminal 1: Start Monitor**

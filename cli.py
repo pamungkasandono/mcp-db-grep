@@ -14,6 +14,145 @@ except PackageNotFoundError:
     __version__ = "0.1.0"
 
 
+def parse_selection_tokens(user_input: str, total_items: int) -> list[int]:
+    selected_indices = []
+    tokens = [t.strip() for t in user_input.replace(";", " ").replace(",", " ").split() if t.strip()]
+
+    for token in tokens:
+        if "-" in token:
+            parts = token.split("-", 1)
+            if parts[0].isdigit() and parts[1].isdigit():
+                start = int(parts[0])
+                end = int(parts[1])
+                if start > end:
+                    start, end = end, start
+                for idx in range(start, end + 1):
+                    if 1 <= idx <= total_items:
+                        selected_indices.append(idx - 1)
+        elif token.isdigit():
+            idx = int(token)
+            if 1 <= idx <= total_items:
+                selected_indices.append(idx - 1)
+
+    # Return deduplicated indices preserving order
+    seen = set()
+    result = []
+    for i in selected_indices:
+        if i not in seen:
+            seen.add(i)
+            result.append(i)
+    return result
+
+
+def run_check_config_cli():
+    import server
+    report = server.inspect_config()
+
+    print("\n--- db-grep Configuration Check ---")
+    print(f"File: {report['config_file']}")
+    if report.get("permissions"):
+        print(f"Permissions: {report['permissions']}")
+    print(f"Monitor Port: {report.get('monitor_port')}")
+
+    if report["warnings"]:
+        print("\nWarnings:")
+        for w in report["warnings"]:
+            print(f"  ⚠ {w}")
+
+    if report["errors"]:
+        print("\nErrors:")
+        for e in report["errors"]:
+            print(f"  ✗ {e}")
+
+    print("\nRegistered Databases:")
+    for d in report["databases"]:
+        status = "✓ OK" if d["valid"] else "✗ INVALID"
+        print(f"  [{status}] {d['key']} ({d['driver']})")
+        if d.get("description"):
+            print(f"         {d['description']}")
+        if d.get("auth_source"):
+            print(f"         Auth: {d['auth_source']}")
+        for err in d.get("errors", []):
+            print(f"         Error: {err}")
+
+    if report["valid"]:
+        print("\nResult: Configuration is VALID.\n")
+        sys.exit(0)
+    else:
+        print("\nResult: Configuration is INVALID. Please correct the errors above.\n")
+        sys.exit(1)
+
+
+def run_check_connection_cli(target: str):
+    import server
+
+    try:
+        all_dbs = server.databases()
+    except Exception as e:
+        print(f"Cannot load database configurations: {e}")
+        sys.exit(1)
+
+    db_keys = list(all_dbs.keys())
+    if not db_keys:
+        print("No databases configured in config.toml")
+        sys.exit(0)
+
+    selected_keys = []
+
+    if target == "INTERACTIVE":
+        print("\n--- db-grep Interactive Connection Check ---")
+        print("Available Databases:")
+        for idx, key in enumerate(db_keys, start=1):
+            desc = all_dbs[key].get("description", "")
+            desc_str = f" - {desc}" if desc else ""
+            print(f"  [{idx}] {key:<25}{desc_str}")
+
+        print("  [a] all                       - Check all databases")
+        print("  [q] quit                      - Cancel")
+
+        try:
+            choice = input("\nSelect database to test [default: all, e.g. 1, 1,3, 1-3, or 'all']: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            sys.exit(0)
+
+        if not choice or choice.lower() in ("a", "all", "*"):
+            selected_keys = db_keys
+        elif choice.lower() in ("q", "quit", "exit"):
+            print("Cancelled.")
+            sys.exit(0)
+        else:
+            indices = parse_selection_tokens(choice, len(db_keys))
+            if not indices:
+                print("No valid database index selected.")
+                sys.exit(1)
+            selected_keys = [db_keys[i] for i in indices]
+    elif target.lower() in ("all", "*"):
+        selected_keys = db_keys
+    else:
+        # Resolve target token(s)
+        tokens = [t.strip() for t in target.replace(",", " ").split() if t.strip()]
+        for t in tokens:
+            resolved = server.resolve_db_key(t, all_dbs)
+            if resolved not in selected_keys:
+                selected_keys.append(resolved)
+
+    print(f"\nChecking {len(selected_keys)} database connection(s)...")
+    has_failure = False
+
+    for key in selected_keys:
+        cfg = all_dbs[key]
+        res = server.ping_database(key, cfg)
+        if res["status"] == "connected":
+            print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
+        else:
+            has_failure = True
+            print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
+
+    print()
+    sys.exit(1 if has_failure else 0)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="db-grep",
@@ -40,6 +179,17 @@ def main():
         "--init",
         action="store_true",
         help="Initialize default config, rules, and register with AI clients",
+    )
+    group.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Validate configuration syntax, driver definitions, permissions, and credentials",
+    )
+    group.add_argument(
+        "--check-connection",
+        nargs="?",
+        const="INTERACTIVE",
+        help="Test physical database connectivity ('all', database name, comma-separated names, or interactive selection)",
     )
 
     parser.add_argument(
@@ -71,6 +221,10 @@ def main():
     elif args.init:
         import installer
         installer.run_init(target_harness=args.client)
+    elif args.check_config:
+        run_check_config_cli()
+    elif args.check_connection is not None:
+        run_check_connection_cli(args.check_connection)
     else:
         print(f"db-grep v{__version__}\n")
         parser.print_help()
