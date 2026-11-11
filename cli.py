@@ -72,6 +72,10 @@ def run_check_config_cli():
             print(f"         {d['description']}")
         if d.get("auth_source"):
             print(f"         Auth: {d['auth_source']}")
+        if "auto_metadata" in d:
+            print(f"         Auto-Metadata: {d['auto_metadata']}")
+        if d.get("auto_tables"):
+            print(f"         Auto-Tables: {', '.join(d['auto_tables'])}")
         for err in d.get("errors", []):
             print(f"         Error: {err}")
 

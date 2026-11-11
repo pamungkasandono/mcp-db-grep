@@ -43,18 +43,18 @@ dsn = "test://localhost/test"
         sample_toml = b"""[monitor]
 port = 48260
 
-# Two databases sharing the EXACT SAME NAME 'bekal-core', but different types!
-[db.postgres.bekal-core]
-dsn = "postgres://user@localhost:5432/bekal_pg"
+# Two databases sharing the EXACT SAME NAME 'inventory-core', but different types!
+[db.postgres.inventory-core]
+dsn = "postgres://user@localhost:5432/inv_pg"
 description = "Postgres DB"
 
-[db.oracle.bekal-core]
-dsn = "host:1521/ORCL"
+[db.oracle.inventory-core]
+dsn = "localhost:1521/ORCL"
 user = "ro_user"
 description = "Oracle DB"
 
-[db.postgres.kala-studio]
-dsn = "postgres://user@localhost:5432/kala"
+[db.postgres.ecommerce-dev]
+dsn = "postgres://user@localhost:5432/ecom"
 """
         with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
             tmp.write(sample_toml)
@@ -62,39 +62,39 @@ dsn = "postgres://user@localhost:5432/kala"
 
             with patch.object(server, "CONFIG", Path(tmp.name)):
                 dbs = server.databases()
-                self.assertIn("postgres:bekal-core", dbs)
-                self.assertIn("oracle:bekal-core", dbs)
-                self.assertIn("postgres:kala-studio", dbs)
+                self.assertIn("postgres:inventory-core", dbs)
+                self.assertIn("oracle:inventory-core", dbs)
+                self.assertIn("postgres:ecommerce-dev", dbs)
 
                 # 1. Unambiguous unique name resolves directly
-                resolved_kala = server.resolve_db_key("kala-studio", dbs)
-                self.assertEqual(resolved_kala, "postgres:kala-studio")
+                resolved_ecom = server.resolve_db_key("ecommerce-dev", dbs)
+                self.assertEqual(resolved_ecom, "postgres:ecommerce-dev")
 
                 # 2. Resolving collided short name without prefix raises helpful ValueError
                 with self.assertRaises(ValueError) as ctx:
-                    server.resolve_db_key("bekal-core", dbs)
+                    server.resolve_db_key("inventory-core", dbs)
                 self.assertIn("ambiguous across multiple types", str(ctx.exception))
-                self.assertIn("postgres:bekal-core", str(ctx.exception))
-                self.assertIn("oracle:bekal-core", str(ctx.exception))
+                self.assertIn("postgres:inventory-core", str(ctx.exception))
+                self.assertIn("oracle:inventory-core", str(ctx.exception))
 
                 # 3. Explicit prefix resolves accurately
-                resolved_pg = server.resolve_db_key("postgres:bekal-core", dbs)
-                self.assertEqual(resolved_pg, "postgres:bekal-core")
+                resolved_pg = server.resolve_db_key("postgres:inventory-core", dbs)
+                self.assertEqual(resolved_pg, "postgres:inventory-core")
 
-                resolved_ora = server.resolve_db_key("oracle:bekal-core", dbs)
-                self.assertEqual(resolved_ora, "oracle:bekal-core")
+                resolved_ora = server.resolve_db_key("oracle:inventory-core", dbs)
+                self.assertEqual(resolved_ora, "oracle:inventory-core")
 
-                # 4. Alias pgsql:bekal-core works
-                resolved_alias = server.resolve_db_key("pgsql:bekal-core", dbs)
-                self.assertEqual(resolved_alias, "postgres:bekal-core")
+                # 4. Alias pgsql:inventory-core works
+                resolved_alias = server.resolve_db_key("pgsql:inventory-core", dbs)
+                self.assertEqual(resolved_alias, "postgres:inventory-core")
 
                 # 5. list_databases tool surfaces full qualified name on collision
                 out_str = asyncio.run(server.list_databases())
                 out = json.loads(out_str)
                 db_names = [item["db"] for item in out]
-                self.assertIn("postgres:bekal-core", db_names)
-                self.assertIn("oracle:bekal-core", db_names)
-                self.assertIn("kala-studio", db_names)
+                self.assertIn("postgres:inventory-core", db_names)
+                self.assertIn("oracle:inventory-core", db_names)
+                self.assertIn("ecommerce-dev", db_names)
 
     def test_single_prefixed_db_resolves_with_or_without_prefix(self):
         sample_toml = b"""[monitor]

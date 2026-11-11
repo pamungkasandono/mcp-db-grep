@@ -11,11 +11,11 @@ STATE_PORT_FILE = CONFIG.parent / "monitor.port"
 try:
     with open(CONFIG, "rb") as f:
         _cfg = tomllib.load(f)
-except FileNotFoundError:
+except Exception:
     _cfg = {}
 PREFERRED_PORT = int(os.environ.get("MONITOR_PORT") or _cfg.get("monitor", {}).get("port", DEFAULT_PORT))
+PROMPT_TIMEOUT = int(os.environ.get("APPROVAL_TIMEOUT_S") or _cfg.get("monitor", {}).get("approval_timeout_s", 110))
 
-PROMPT_TIMEOUT = 110  # seconds; timeout = auto-reject
 R, G, Y, D, N = "\033[31m", "\033[32m", "\033[33m", "\033[2m", "\033[0m"
 COLORS = ["\033[36m", "\033[35m", "\033[34m", "\033[92m", "\033[95m"]
 lock = asyncio.Lock()  # one prompt at a time across sessions
@@ -84,7 +84,7 @@ async def handle(reader, writer):
             now = datetime.now().strftime("%H:%M:%S")
             db_label = m.get("db", "")
             if db_label:
-                # If db_label already contains type prefix (e.g. 'postgres:bekal-akun'), normalize display
+                # If db_label already contains type prefix (e.g. 'postgres:ecommerce-dev'), normalize display
                 if ":" in db_label:
                     d_type, d_name = db_label.split(":", 1)
                     disp_type = "pgsql" if d_type in ("postgres", "pgsql") else d_type
@@ -112,6 +112,13 @@ async def handle(reader, writer):
                 if not ok:
                     lock.release()
                     holding = False
+
+            elif m["type"] == "auto_allow":
+                async with lock:
+                    reason_str = f" {G}({clean(m.get('reason', 'auto_allow'))}){N}" if m.get("reason") else ""
+                    print(f"{head} {G}[AUTO-ALLOWED]{N} ━━{N}\n{D}{clean(m['konteks'])}{reason_str}{N}\n{clean(m['sql'])}")
+                    if m.get("params"):
+                        print(f"{D}params: {clean(m['params'])}{N}")
 
             elif m["type"] == "result":
                 n = len(m["rows"])

@@ -49,30 +49,47 @@ db-grep --init --client all           # configure all harnesses
 Edit `~/.config/db-grep/config.toml`:
 ```toml
 [monitor]
-port = 48260  # unique safe port (auto-fallback across 48260-48270 if busy)
+port = 48260
+approval_timeout_s = 110      # auto-reject after 110s without response
 
-# Postgres: [db.postgres.<name>]
-[db.postgres.my-postgres]
-description = "Main application database"
-dsn = "postgres://user@localhost:5432/my_db"
-password = "your_password"
+[defaults]
+auto_metadata = true          # list_tables & describe_table without y/n
+max_rows = 100
+timeout_ms = 10000
 
-# Oracle: [db.oracle.<name>]
-[db.oracle.legacy-oracle]
-description = "Company Oracle DB"
-dsn = "host:1521/SERVICE_NAME"
+# ── Format 1: Full DSN, raw credentials (ideal for local dev)
+[db.postgres.ecommerce-dev]
+description = "Development E-Commerce Database"
+dsn = "postgres://ro_user:rahasia@localhost:5432/ecommerce_dev"
+auto_tables = ["mst_*", "ref_*", "app_configs"]
+
+# ── Format 2: DSN + credentials from environment (shorthand)
+[db.postgres.inventory-core]
+description = "Core Inventory Management"
+dsn = "postgres://localhost:5432/inventory?sslmode=require"
 user = "ro_user"
-password_env = "ORACLE_PW"
+password = "env:INVENTORY_PW"
 
-# Multiple databases with the same name across different types work cleanly:
-[db.postgres.company-core]
-dsn = "postgres://user@localhost:5432/company"
+# ── Format 3: Inline password in DSN from env or file (always use |urlenc)
+[db.postgres.analytics-app]
+description = "Analytics Database"
+dsn = "postgres://ro_user:${env:ANALYTICS_PW|urlenc}@localhost:5432/analytics"
 
-[db.oracle.company-core]
-dsn = "host:1521/SERVICE_NAME"
+# ── Oracle Format A: Connect string + user + secret from file
+[db.oracle.payroll-prod]
+description = "Corporate Payroll Database"
+dsn = "localhost:1521/PROD"  # or remote: "db-host:1521/PROD"
 user = "ro_user"
+password = "file:~/.config/db-grep/secrets/payroll"
+schema = "HR"
+auto_metadata = false        # override: table inspection requires y/n
+
+# ── Oracle Format B: Inline user and password inside connect string
+[db.oracle.emergency-loan]
+description = "Emergency Loan Service"
+dsn = "ro_user/${env:EMLOAN_PW}@localhost:1521/EMLOAN"
 ```
-*(When identical names exist across types, AI can address them by type prefix e.g. `postgres:company-core` or `oracle:company-core`).*
+*(Supports universal interpolation `${env:VAR}`, `${file:/path}`, `${env:VAR|urlenc}`, and shorthand `env:VAR` / `file:/path`).*
 
 ---
 
@@ -93,8 +110,8 @@ db-grep --check-connection
 
 # Non-interactive CLI:
 db-grep --check-connection all
-db-grep --check-connection bekal-akun
-db-grep --check-connection postgres:company-core,oracle:company-core
+db-grep --check-connection ecommerce-dev
+db-grep --check-connection postgres:inventory-core oracle:payroll-prod
 ```
 *(Also available as AI MCP tool `check_connection(db="all")`. Does not require interactive monitor approval).*
 

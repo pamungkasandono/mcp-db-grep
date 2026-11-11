@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
 
 ### Added
+- Universal secret interpolation `${env:VAR}`, `${file:/path}`, `${env:VAR|urlenc}`, and shorthand `env:VAR` / `file:/path`.
+- Enforced `chmod 600` on POSIX when config contains raw secrets or `file:` references.
+- `[defaults]` section supporting inheritance for `auto_metadata`, `max_rows`, and `timeout_ms`.
+- Per-database `auto_metadata` and table whitelist `auto_tables` with AST-level table extraction via `sqlglot`.
+- Secret redaction layer replacing resolved credentials with `***` across all driver errors, logs, and monitor outputs.
+- Per-database fault tolerance ensuring invalid database definitions do not halt or disable other valid connections.
 - `--check-connection` multi-target execution accepting multiple database names separated by spaces in a single command.
 - `--check-update` and `--upgrade` CLI flags to inspect GitHub releases and upgrade in place.
 - Direct one-liner install and initialize instructions in `README.md`.

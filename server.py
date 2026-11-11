@@ -1,10 +1,13 @@
-import asyncio, json, logging, os, re, sys, time, tomllib
+import asyncio, fnmatch, json, logging, os, re, sys, time, tomllib
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import quote
 from pydantic import Field
 from mcp.server.fastmcp import FastMCP
+import sqlglot
+from sqlglot import exp
 
 logging.basicConfig(stream=sys.stderr)  # stdout is reserved for stdio MCP protocol
 log = logging.getLogger("db-grep")
@@ -13,26 +16,160 @@ CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "
 AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
 
 Konteks = Annotated[str, Field(
-    description="Required. Format '<project-name> · <action>', example 'bekal-akun · fetch student sample data'")]
+    description="Required. Format '<project-name> · <action>', example 'ecommerce · fetch product inventory'")]
 DbName = Annotated[str, Field(description="Database connection name. See list_databases.")]
+
+KNOWN_DEFAULTS_KEYS = {"auto_metadata", "max_rows", "timeout_ms"}
+KNOWN_DB_KEYS = {
+    "type", "dsn", "user", "password", "password_env", "description",
+    "schema", "auto_metadata", "auto_tables", "max_rows", "timeout_ms"
+}
+KNOWN_MONITOR_KEYS = {"port", "approval_timeout_s"}
+
+REF = re.compile(r"\$\{(env|file):([^}|]+)(?:\|(urlenc))?\}")
+SHORT = re.compile(r"^(env|file):(.+)$")
+
+DISABLED_DATABASES: dict[str, str] = {}
+
+
+# ---------- interpolation and secret resolution ----------
+def _read(kind: str, arg: str) -> str:
+    if kind == "env":
+        if arg not in os.environ:
+            raise ValueError(f"Environment variable '{arg}' is not set")
+        return os.environ[arg]
+    p = Path(arg).expanduser()
+    if not p.exists():
+        raise ValueError(f"Secret file not found: {p}")
+    if os.name == "posix" and (p.stat().st_mode & 0o077):
+        raise ValueError(f"Permissions on secret file {p} are too loose. Run: chmod 600 {p}")
+    return p.read_text(encoding="utf-8").rstrip("\r\n")
+
+
+def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None = None) -> str:
+    if not isinstance(value, str):
+        return value
+    if shorthand:
+        if value.startswith("raw:"):
+            val = value[4:]
+            if secrets_pool is not None and val:
+                secrets_pool.add(val)
+            return val
+        if m := SHORT.match(value):
+            val = _read(m[1], m[2].strip())
+            if secrets_pool is not None and val:
+                secrets_pool.add(val)
+            return val
+
+    def sub(m):
+        v = _read(m[1], m[2].strip())
+        if secrets_pool is not None and v:
+            secrets_pool.add(v)
+        return quote(v, safe="") if m[3] else v
+
+    out = REF.sub(sub, value.replace("$$", "\0"))
+    res = out.replace("\0", "$")
+    return res
+
+
+def has_raw_secret(cfg: dict) -> bool:
+    pw = cfg.get("password")
+    if pw is not None:
+        pw_str = str(pw)
+        is_ref = (
+            pw_str.startswith("env:")
+            or pw_str.startswith("file:")
+            or bool(REF.search(pw_str))
+        ) and not pw_str.startswith("raw:")
+        if not is_ref:
+            return True
+
+    dsn = cfg.get("dsn", "")
+    if dsn and isinstance(dsn, str):
+        m = re.search(r"://[^/@:]+:([^/@]+)@", dsn)
+        if m and "${" not in m.group(1):
+            return True
+        m_ora = re.search(r"^[^/@:]+/([^/@]+)@", dsn)
+        if m_ora and "${" not in m_ora.group(1):
+            return True
+    return False
+
+
+def extract_tables(sql: str, dialect: str = "postgres") -> set[str]:
+    try:
+        d_name = "oracle" if dialect == "oracle" else "postgres"
+        parsed = sqlglot.parse_one(sql, read=d_name)
+        if not parsed:
+            return set()
+        ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(exp.CTE) if cte.alias_or_name}
+        tables = {t.name.lower() for t in parsed.find_all(exp.Table) if t.name} - ctes
+        return tables
+    except Exception:
+        return set()
+
+
+def matches_auto_tables(table_name: str, patterns: list[str]) -> bool:
+    if not table_name or not patterns:
+        return False
+    name_lower = table_name.lower()
+    return any(fnmatch.fnmatch(name_lower, p.lower()) for p in patterns)
 
 
 # ---------- config ----------
 def read_config():
     if not CONFIG.exists():
         raise ValueError(f"Config not found: {CONFIG}")
-    if os.name == "posix" and CONFIG.stat().st_mode & 0o077:
-        log.warning("Run: chmod 600 %s (file contains credentials)", CONFIG)
     with open(CONFIG, "rb") as f:
-        return tomllib.load(f)
+        try:
+            raw_cfg = tomllib.load(f)
+        except Exception as e:
+            raise ValueError(f"TOML parse error in {CONFIG}: {e}")
+
+    # Enforce chmod 600 if config contains raw secrets
+    has_raw = False
+    raw_dbs = raw_cfg.get("db", {})
+    if isinstance(raw_dbs, dict):
+        for driver_type, table in raw_dbs.items():
+            if isinstance(table, dict):
+                for name, cfg in table.items():
+                    if isinstance(cfg, dict) and has_raw_secret(cfg):
+                        has_raw = True
+                        break
+            if has_raw:
+                break
+
+    if has_raw and os.name == "posix":
+        mode = CONFIG.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise ValueError(
+                f"Config contains raw secrets and permissions on {CONFIG} are too loose ({oct(mode)}). "
+                f"Run: chmod 600 {CONFIG}"
+            )
+    return raw_cfg
 
 
 def databases():
-    raw_db = read_config().get("db", {})
+    global DISABLED_DATABASES
+    DISABLED_DATABASES = {}
+
+    raw_cfg = read_config()
+    raw_db = raw_cfg.get("db", {})
     if not raw_db:
         raise ValueError(f"No [db.<driver>.<name>] found in {CONFIG}")
 
+    defaults = raw_cfg.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise ValueError(f"[defaults] must be a key-value table in {CONFIG}")
+    unknown_defs = set(defaults.keys()) - KNOWN_DEFAULTS_KEYS
+    if unknown_defs:
+        raise ValueError(f"Unknown key(s) in [defaults]: {', '.join(sorted(unknown_defs))}")
+
+    default_auto_meta = defaults.get("auto_metadata", True)
+    default_max_rows = defaults.get("max_rows", 100)
+    default_timeout_ms = defaults.get("timeout_ms", 10_000)
+
     normalized = {}
+
     for driver_type, table in raw_db.items():
         if not isinstance(table, dict):
             continue
@@ -44,31 +181,62 @@ def databases():
             )
 
         for name, sub_cfg in table.items():
+            composite_key = f"{driver_type}:{name}"
             if not isinstance(sub_cfg, dict):
+                DISABLED_DATABASES[composite_key] = "Configuration must be a key-value table"
                 continue
+
             cfg = dict(sub_cfg)
             cfg["type"] = driver_type
-            composite_key = f"{driver_type}:{name}"
+
+            # Check unknown keys
+            unknown_keys = set(cfg.keys()) - KNOWN_DB_KEYS
+            if unknown_keys:
+                DISABLED_DATABASES[composite_key] = f"Unknown configuration key(s): {', '.join(sorted(unknown_keys))}"
+                continue
+
+            # Check required fields
+            if not cfg.get("dsn"):
+                DISABLED_DATABASES[composite_key] = "Missing required field 'dsn'"
+                continue
+            if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
+                DISABLED_DATABASES[composite_key] = "Missing required field 'user' for Oracle"
+                continue
+
+            # Check auto_tables format
+            if "auto_tables" in cfg:
+                if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
+                    DISABLED_DATABASES[composite_key] = "'auto_tables' must be a list of strings"
+                    continue
+
+            # Inheritance (auto_tables is NEVER inherited)
+            cfg["auto_metadata"] = cfg.get("auto_metadata", default_auto_meta)
+            cfg["max_rows"] = cfg.get("max_rows", default_max_rows)
+            cfg["timeout_ms"] = cfg.get("timeout_ms", default_timeout_ms)
+            cfg.setdefault("auto_tables", [])
+
+            # Dry-run interpolation validation per DB
+            try:
+                test_pool = set()
+                resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
+                if "user" in cfg:
+                    resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
+                if "password" in cfg:
+                    resolve(str(cfg["password"]), shorthand=True, secrets_pool=test_pool)
+                elif cfg.get("password_env"):
+                    p_env = cfg["password_env"]
+                    if p_env not in os.environ:
+                        raise ValueError(f"Environment variable '{p_env}' is not set")
+            except Exception as e:
+                DISABLED_DATABASES[composite_key] = str(e)
+                continue
+
             normalized[composite_key] = cfg
 
-    if not normalized:
+    if not normalized and not DISABLED_DATABASES:
         raise ValueError(f"No valid [db.<driver>.<name>] configurations found in {CONFIG}")
 
-    for key, c in normalized.items():
-        for req_key in ("dsn", "user") if c["type"] == "oracle" else ("dsn",):
-            if not c.get(req_key):
-                raise ValueError(f"Database [{key}] missing required field '{req_key}'")
-
     return normalized
-
-
-def password(c):
-    if c.get("password"):
-        return c["password"]
-    env = c.get("password_env")
-    if env and env not in os.environ:
-        raise ValueError(f"Env var {env} is not set (required by this connection)")
-    return os.environ.get(env, "") if env else ""
 
 
 # ---------- database ----------
@@ -79,6 +247,43 @@ class DB:
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
         self.timeout_ms = cfg.get("timeout_ms", 10_000)
+        self.secrets = set()
+
+    def get_password(self) -> str:
+        if "password" in self.cfg:
+            return resolve(str(self.cfg["password"]), shorthand=True, secrets_pool=self.secrets)
+        env = self.cfg.get("password_env")
+        if env:
+            if env not in os.environ:
+                raise ValueError(f"Environment variable '{env}' is not set")
+            val = os.environ[env]
+            self.secrets.add(val)
+            return val
+        return ""
+
+    def get_user(self) -> str:
+        if "user" in self.cfg:
+            return resolve(str(self.cfg["user"]), shorthand=True, secrets_pool=self.secrets)
+        return ""
+
+    def get_dsn(self) -> str:
+        dsn = resolve(self.cfg.get("dsn", ""), shorthand=False, secrets_pool=self.secrets)
+        m = re.search(r"://[^/@:]+:([^/@]+)@", dsn)
+        if m:
+            self.secrets.add(m.group(1))
+        m_ora = re.search(r"^[^/@:]+/([^/@]+)@", dsn)
+        if m_ora:
+            self.secrets.add(m_ora.group(1))
+        return dsn
+
+    def redact(self, text: str) -> str:
+        if not text or not self.secrets:
+            return str(text)
+        out = str(text)
+        for s in sorted(self.secrets, key=len, reverse=True):
+            if s and len(s) > 2:
+                out = out.replace(s, "***")
+        return out
 
     def run(self, sql, params=()):
         if self.conn is None:
@@ -87,8 +292,8 @@ class DB:
             return self._exec(sql, params)
         except Exception:
             if self.healthy():
-                raise  # standard SQL error
-            self.close()  # connection dropped: reconnect and retry once
+                raise
+            self.close()
             self.connect()
             return self._exec(sql, params)
 
@@ -117,10 +322,21 @@ class Postgres(DB):
 
     def connect(self):
         import psycopg
-        pw = password(self.cfg)
+        dsn = self.get_dsn()
+        pw = self.get_password()
+        user = self.get_user()
+        kwargs = {}
+        if user:
+            kwargs["user"] = user
+        if pw:
+            kwargs["password"] = pw
+
         self.conn = psycopg.connect(
-            self.cfg["dsn"], autocommit=True, **({"password": pw} if pw else {}),
-            options=f"-c statement_timeout={self.timeout_ms} -c default_transaction_read_only=on")
+            dsn,
+            autocommit=True,
+            **kwargs,
+            options=f"-c statement_timeout={self.timeout_ms} -c default_transaction_read_only=on",
+        )
 
     def healthy(self):
         return not (self.conn.closed or self.conn.broken)
@@ -133,12 +349,17 @@ class Oracle(DB):
 
     @property
     def default_schema(self):
-        return self.cfg.get("schema", self.cfg["user"])
+        return self.cfg.get("schema", self.get_user() or self.cfg.get("user", ""))
 
     def connect(self):
         import oracledb
-        self.conn = oracledb.connect(user=self.cfg["user"], password=password(self.cfg),
-                                     dsn=self.cfg["dsn"])
+        dsn = self.get_dsn()
+        pw = self.get_password()
+        user = self.get_user()
+        if user or pw:
+            self.conn = oracledb.connect(user=user or "", password=pw or "", dsn=dsn)
+        else:
+            self.conn = oracledb.connect(dsn=dsn)
         self.conn.call_timeout = self.timeout_ms
 
     def healthy(self):
@@ -147,7 +368,7 @@ class Oracle(DB):
     def _exec(self, sql, params):
         try:
             with self.conn.cursor() as cur:
-                cur.execute("SET TRANSACTION READ ONLY")  # extra layer; read-only grant is primary
+                cur.execute("SET TRANSACTION READ ONLY")
                 cur.execute(sql, params)
                 cols = [d[0] for d in cur.description]
                 return cols, cur.fetchmany(self.max_rows)
@@ -163,12 +384,11 @@ conns: dict[str, DB] = {}
 
 
 def resolve_db_key(requested_name: str, cfgs: dict) -> str:
-    # 1. Exact match (e.g. "postgres:bekal-akun" or traditional "kala-studio")
+    # 1. Exact match (e.g. "postgres:ecommerce-dev" or "inventory-core")
     if requested_name in cfgs:
         return requested_name
 
     # 2. Check if requested name matches an unqualified short name
-    # e.g. requested "bekal-akun" matching "postgres:bekal-akun"
     matches = [k for k in cfgs if k.endswith(f":{requested_name}")]
     if len(matches) == 1:
         return matches[0]
@@ -197,9 +417,16 @@ def resolve_db_key(requested_name: str, cfgs: dict) -> str:
 
 def get_db(name: str):
     cfgs = databases()  # reloaded on each call: config updates apply immediately
-    resolved_key = resolve_db_key(name, cfgs)
-    cfg = cfgs[resolved_key]
+    try:
+        resolved_key = resolve_db_key(name, cfgs)
+    except ValueError as e:
+        # Check if the requested name matches a disabled database
+        for k, err in DISABLED_DATABASES.items():
+            if k == name or k.endswith(f":{name}"):
+                raise ValueError(f"Database [{k}] is disabled: {err}") from None
+        raise e
 
+    cfg = cfgs[resolved_key]
     cur = conns.get(resolved_key)
     if cur is None or cur.cfg != cfg:
         if cur:
@@ -312,13 +539,39 @@ def check_konteks(k):
     k = re.sub(r"[\x00-\x1f\x7f]", "", k or "").strip()[:80]
     if "·" not in k:
         raise ValueError("konteks must be in format '<project-name> · <action>', "
-                         "example 'bekal-akun · fetch student sample data'")
+                         "example 'ecommerce · fetch product inventory'")
     return k
 
 
 # ---------- approval gate ----------
 async def execute(tool, d, konteks, sql, params=(), reject=None):
     konteks = check_konteks(konteks)
+
+    # Evaluate auto-allow rules
+    auto_metadata = d.cfg.get("auto_metadata", True)
+    auto_tables = d.cfg.get("auto_tables", [])
+    auto_allow = False
+    auto_reason = None
+
+    if tool == "list_tables":
+        if auto_metadata:
+            auto_allow = True
+            auto_reason = "auto_metadata = true"
+    elif tool == "describe_table":
+        table_name = params[1] if len(params) > 1 else ""
+        if auto_metadata:
+            auto_allow = True
+            auto_reason = "auto_metadata = true"
+        elif auto_tables and matches_auto_tables(table_name, auto_tables):
+            auto_allow = True
+            auto_reason = f"table '{table_name}' matches auto_tables"
+    elif tool == "query":
+        if auto_tables:
+            queried_tables = extract_tables(sql, dialect=d.cfg["type"])
+            if queried_tables and all(matches_auto_tables(tbl, auto_tables) for tbl in queried_tables):
+                auto_allow = True
+                auto_reason = f"all tables ({', '.join(sorted(queried_tables))}) match auto_tables"
+
     async with lock:
         try:
             # Wait up to 25s if monitor is not running yet
@@ -333,14 +586,17 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 f"The database monitor (`db-grep --monitor`) must be opened in another terminal to review and approve this action."
             )
 
-        audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
-        try:
-            msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "konteks": konteks, "sql": sql}
-            if reject:
-                await link.send({"type": "blocked", "reason": reject, **msg})
-                audit("blocked", reason=reject)
-                raise ValueError(f"Rejected: {reject}")
+        msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "konteks": konteks, "sql": sql}
+        if reject:
+            await link.send({"type": "blocked", "reason": reject, **msg})
+            audit("blocked", reason=reject)
+            raise ValueError(f"Rejected: {reject}")
 
+        if auto_allow:
+            audit("auto_allow", db=d.name, tool=tool, reason=auto_reason, sql=sql)
+            await link.send({"type": "auto_allow", "reason": auto_reason, "params": params, **msg})
+        else:
+            audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
             await link.send({"type": "request", "params": params, **msg})
             line = await link.reader.readline()  # timeout is managed by monitor
             if not line:
@@ -355,21 +611,20 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                     f"Context: {konteks}"
                 )
 
-            t0 = time.monotonic()
-            try:
-                cols, rows = await asyncio.to_thread(d.run, sql, params)
-            except Exception as e:
-                audit("error", error=str(e))
-                await link.send({"type": "error", "message": str(e)})
-                raise
-            ms = int((time.monotonic() - t0) * 1000)
-            audit("executed", rows=len(rows), ms=ms)  # query data itself is never logged
-            await link.send({"type": "result", "cols": cols, "rows": rows,
-                             "ms": ms, "limit": d.max_rows})
-            return json.dumps([dict(zip(cols, r)) for r in rows], default=str)
-        except (asyncio.CancelledError, ConnectionError):
-            link.drop()  # stale responses must not be read by subsequent requests
-            raise
+        t0 = time.monotonic()
+        try:
+            cols, rows = await asyncio.to_thread(d.run, sql, params)
+        except Exception as e:
+            redacted_err = d.redact(str(e))
+            audit("error", error=redacted_err)
+            await link.send({"type": "error", "message": redacted_err})
+            raise RuntimeError(redacted_err) from None
+
+        ms = int((time.monotonic() - t0) * 1000)
+        audit("executed", rows=len(rows), ms=ms)  # query data itself is never logged
+        await link.send({"type": "result", "cols": cols, "rows": rows,
+                         "ms": ms, "limit": d.max_rows})
+        return json.dumps([dict(zip(cols, r)) for r in rows], default=str)
 
 
 # ---------- diagnostic and health inspection ----------
@@ -385,6 +640,8 @@ def inspect_config() -> dict:
         "config_file": str(CONFIG),
         "file_exists": CONFIG.exists(),
         "permissions": None,
+        "has_raw_secrets": False,
+        "defaults": {},
         "monitor_port": None,
         "databases": [],
         "errors": [],
@@ -399,8 +656,6 @@ def inspect_config() -> dict:
     if os.name == "posix":
         mode = CONFIG.stat().st_mode & 0o777
         report["permissions"] = oct(mode)
-        if mode & 0o077:
-            report["warnings"].append(f"File permissions ({oct(mode)}) allow other users to read credentials. Run: chmod 600 {CONFIG}")
 
     try:
         with open(CONFIG, "rb") as f:
@@ -411,11 +666,45 @@ def inspect_config() -> dict:
         return report
 
     report["monitor_port"] = raw_cfg.get("monitor", {}).get("port", DEFAULT_PORT)
+    defaults = raw_cfg.get("defaults", {})
+    if isinstance(defaults, dict):
+        report["defaults"] = defaults
+        unknown_defs = set(defaults.keys()) - KNOWN_DEFAULTS_KEYS
+        if unknown_defs:
+            report["valid"] = False
+            report["errors"].append(f"Unknown key(s) in [defaults]: {', '.join(sorted(unknown_defs))}")
+
     raw_dbs = raw_cfg.get("db", {})
     if not raw_dbs:
         report["valid"] = False
-        report["errors"].append(f"No database tables found. Format required: [db.<driver>.<name>]")
+        report["errors"].append("No database tables found. Format required: [db.<driver>.<name>]")
         return report
+
+    # Check for raw secrets across all configs
+    has_raw = False
+    for driver_type, table in raw_dbs.items():
+        if isinstance(table, dict):
+            for db_name, cfg in table.items():
+                if isinstance(cfg, dict) and has_raw_secret(cfg):
+                    has_raw = True
+                    break
+        if has_raw:
+            break
+    report["has_raw_secrets"] = has_raw
+
+    if os.name == "posix":
+        mode = CONFIG.stat().st_mode & 0o777
+        if has_raw and (mode & 0o077):
+            report["valid"] = False
+            report["errors"].append(
+                f"Config contains raw secrets and file permissions ({oct(mode)}) are too loose. "
+                f"Run: chmod 600 {CONFIG}"
+            )
+        elif mode & 0o077:
+            report["warnings"].append(
+                f"File permissions ({oct(mode)}) allow other local users to read config. "
+                f"Recommended: chmod 600 {CONFIG}"
+            )
 
     for driver_type, table in raw_dbs.items():
         if not isinstance(table, dict):
@@ -434,6 +723,8 @@ def inspect_config() -> dict:
                 "key": f"{driver_type}:{db_name}",
                 "driver": driver_type,
                 "description": cfg.get("description", "") if isinstance(cfg, dict) else "",
+                "auto_metadata": cfg.get("auto_metadata", defaults.get("auto_metadata", True)) if isinstance(cfg, dict) else True,
+                "auto_tables": cfg.get("auto_tables", []) if isinstance(cfg, dict) else [],
                 "valid": True,
                 "errors": [],
             }
@@ -445,23 +736,51 @@ def inspect_config() -> dict:
                 report["valid"] = False
                 continue
 
-            for req_key in ("dsn", "user") if driver_type == "oracle" else ("dsn",):
-                if not cfg.get(req_key):
-                    db_report["valid"] = False
-                    db_report["errors"].append(f"Missing required field '{req_key}'")
+            # Check unknown keys
+            unknown_keys = set(cfg.keys()) - KNOWN_DB_KEYS
+            if unknown_keys:
+                db_report["valid"] = False
+                db_report["errors"].append(f"Unknown key(s): {', '.join(sorted(unknown_keys))}")
 
-            # Check password configuration
-            pw_env = cfg.get("password_env")
-            if pw_env:
-                if pw_env not in os.environ:
+            # Check required fields
+            if not cfg.get("dsn"):
+                db_report["valid"] = False
+                db_report["errors"].append("Missing required field 'dsn'")
+            if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
+                db_report["valid"] = False
+                db_report["errors"].append("Missing required field 'user' for Oracle")
+
+            # Check auto_tables
+            if "auto_tables" in cfg:
+                if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
                     db_report["valid"] = False
-                    db_report["errors"].append(f"Environment variable '{pw_env}' is not set.")
+                    db_report["errors"].append("'auto_tables' must be a list of strings")
+
+            # Check secret resolution & auth source
+            try:
+                test_pool = set()
+                resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
+                if "user" in cfg:
+                    resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
+                if "password" in cfg:
+                    resolve(str(cfg["password"]), shorthand=True, secrets_pool=test_pool)
+                    p_str = str(cfg["password"])
+                    if p_str.startswith("env:") or "${env:" in p_str:
+                        db_report["auth_source"] = "env"
+                    elif p_str.startswith("file:") or "${file:" in p_str:
+                        db_report["auth_source"] = "file"
+                    else:
+                        db_report["auth_source"] = "raw"
+                elif cfg.get("password_env"):
+                    p_env = cfg["password_env"]
+                    if p_env not in os.environ:
+                        raise ValueError(f"Environment variable '{p_env}' is not set")
+                    db_report["auth_source"] = f"env:{p_env}"
                 else:
-                    db_report["auth_source"] = f"env:{pw_env}"
-            elif cfg.get("password"):
-                db_report["auth_source"] = "config.toml"
-            else:
-                db_report["auth_source"] = "none"
+                    db_report["auth_source"] = "dsn / none"
+            except Exception as e:
+                db_report["valid"] = False
+                db_report["errors"].append(str(e))
 
             if not db_report["valid"]:
                 report["valid"] = False
@@ -485,6 +804,23 @@ def ping_database(db_key: str, cfg: dict) -> dict:
 
     t0 = time.monotonic()
     db_inst = None
+    try:
+        db_inst = DRIVERS[driver_type](db_key, cfg)
+        db_inst.connect()
+        cols, rows = db_inst.run(ping_sql)
+        ms = round((time.monotonic() - t0) * 1000, 2)
+        result["status"] = "connected"
+        result["latency_ms"] = ms
+    except Exception as e:
+        if db_inst:
+            result["error"] = db_inst.redact(str(e))
+        else:
+            result["error"] = str(e)
+    finally:
+        if db_inst:
+            db_inst.close()
+
+    return result
     try:
         db_inst = DRIVERS[driver_type](db_key, cfg)
         db_inst.connect()

@@ -50,19 +50,39 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 
 SAMPLE_CONFIG = """[monitor]
 port = 48260
+approval_timeout_s = 110      # auto-reject after this many seconds without response
 
-# Postgres Connection:
-# [db.postgres.my-app]
-# description = "Main application database"
-# dsn = "postgres://user@localhost:5432/my_app"
-# password_env = "MY_APP_PW"  # or: password = "plain_password"
+[defaults]
+auto_metadata = true          # list_tables & describe_table without y/n
+max_rows = 1000
+timeout_ms = 10000
 
-# Oracle Connection:
-# [db.oracle.legacy-db]
-# description = "Corporate Oracle database"
-# dsn = "host:1521/SERVICE_NAME"
+# ── Postgres Example 1: Full DSN with raw secret (ideal for local dev)
+# [db.postgres.ecommerce-dev]
+# description = "Development E-Commerce Database"
+# dsn = "postgres://ro_user:rahasia@localhost:5432/ecommerce_dev"
+# auto_tables = ["mst_*", "ref_*", "app_configs"]
+
+# ── Postgres Example 2: DSN + credentials from environment (shorthand)
+# [db.postgres.inventory-core]
+# description = "Core Inventory Management"
+# dsn = "postgres://localhost:5432/inventory?sslmode=require"
 # user = "ro_user"
-# password_env = "ORACLE_PW"
+# password = "env:INVENTORY_PW"
+
+# ── Postgres Example 3: Inline password in DSN from env/file (use |urlenc)
+# [db.postgres.analytics-app]
+# description = "Analytics Database"
+# dsn = "postgres://ro_user:${env:ANALYTICS_PW|urlenc}@localhost:5432/analytics"
+
+# ── Oracle Example: Connect string + secret from file (or inline: ro_user/${env:PAYROLL_PW}@localhost:1521/PROD)
+# [db.oracle.payroll-prod]
+# description = "Corporate Payroll Database"
+# dsn = "localhost:1521/PROD"  # or remote: "db-host:1521/PROD"
+# user = "ro_user"
+# password = "file:~/.config/db-grep/secrets/payroll"
+# schema = "HR"
+# auto_metadata = false       # structure inspection also requires y/n
 """
 
 
