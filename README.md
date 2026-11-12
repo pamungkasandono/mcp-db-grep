@@ -130,9 +130,10 @@ db-grep --check-connection
 # Non-interactive CLI:
 db-grep --check-connection all
 db-grep --check-connection ecommerce-dev
+db-grep --check-connection inventory-core                       # runs all drivers matching 'inventory-core'
 db-grep --check-connection postgres:inventory-core oracle:payroll-prod
 ```
-*(Also available as AI MCP tool `check_connection(db="all")`. Does not require interactive monitor approval).*
+*(Passing a short name without prefix checks all matching databases across drivers; use `postgres:<name>` or `oracle:<name>` to target a specific driver. Also available as AI MCP tool `check_connection(db="all")`, without interactive monitor approval).*
 
 ---
 

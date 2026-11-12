@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
+- Removed `pgsql:` prefix alias; always use explicit `postgres:<name>` or `oracle:<name>` when specifying driver type.
+- `check_connection` / `--check-connection` now tests all matching databases across drivers when given an unprefixed short name, while `postgres:<name>` or `oracle:<name>` targets a specific driver.
 
 ### Added
 - `--config` interactive controller and CLI subcommands (`list`, `add`, `disable`, `enable`, `delete`, `edit`) to manage databases without manual file edits.
