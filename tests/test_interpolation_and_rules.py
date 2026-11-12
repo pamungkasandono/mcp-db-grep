@@ -195,6 +195,104 @@ typo_field = "oops"
             self.assertNotIn("SuperSecretPass123", redacted)
             self.assertIn("***", redacted)
 
+    def test_full_dsn_via_shorthand_env_and_file(self):
+        sample_toml = b"""[db.postgres.pg_env]
+dsn = "env:PG_FULL_DSN"
+
+[db.oracle.ora_env]
+dsn = "env:ORA_FULL_DSN"
+"""
+        with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as tmp:
+            tmp.write(sample_toml)
+            tmp_path = Path(tmp.name)
+
+        try:
+            env_vars = {
+                "PG_FULL_DSN": "postgres://ro_user:PgInlineSecret99@db.example.com:5432/prod",
+                "ORA_FULL_DSN": "hr_ro/OraInlineSecret88@ora.example.com:1521/ORCL",
+            }
+            with patch.dict(os.environ, env_vars):
+                with patch.object(server, "CONFIG", tmp_path):
+                    dbs = server.databases()
+                    self.assertIn("postgres:pg_env", dbs)
+                    self.assertIn("oracle:ora_env", dbs)
+
+                    pg_db = server.Postgres("postgres:pg_env", dbs["postgres:pg_env"])
+                    self.assertEqual(pg_db.get_dsn(), env_vars["PG_FULL_DSN"])
+                    self.assertIn("PgInlineSecret99", pg_db.secrets)
+
+                    ora_db = server.Oracle("oracle:ora_env", dbs["oracle:ora_env"])
+                    self.assertEqual(ora_db.get_dsn(), env_vars["ORA_FULL_DSN"])
+                    self.assertIn("OraInlineSecret88", ora_db.secrets)
+
+                    report = server.inspect_config()
+                    self.assertTrue(report["valid"])
+                    self.assertFalse(report["has_raw_secrets"])
+                    for d in report["databases"]:
+                        self.assertEqual(d["auth_source"], "env")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def test_partial_dsn_env_user_host_port_and_raw_secret_detection(self):
+        # Username, host, port from env WITHOUT password in DSN -> must NOT be flagged as raw secret
+        cfg_safe = {
+            "type": "postgres",
+            "dsn": "postgres://${env:DB_USER}@${env:DB_HOST}:${env:DB_PORT}/mydb",
+        }
+        self.assertFalse(server.has_raw_secret(cfg_safe))
+
+        # Both user and password from env -> must NOT be flagged as raw secret
+        cfg_both_env = {
+            "type": "postgres",
+            "dsn": "postgres://${env:DB_USER}:${env:DB_PW|urlenc}@${env:DB_HOST}:${env:DB_PORT}/mydb",
+        }
+        self.assertFalse(server.has_raw_secret(cfg_both_env))
+
+        # User from env, but password is raw plaintext -> MUST be flagged as raw secret
+        cfg_raw_pw = {
+            "type": "postgres",
+            "dsn": "postgres://${env:DB_USER}:PlainSecret123@${env:DB_HOST}:5432/mydb",
+        }
+        self.assertTrue(server.has_raw_secret(cfg_raw_pw))
+
+    def test_pre_driver_dsn_and_interpolation_syntax_validation(self):
+        # 1. Malformed / unclosed interpolation syntax
+        with self.assertRaises(ValueError):
+            server.resolve("postgres://${env:UNCLOSED@localhost/db")
+        with self.assertRaises(ValueError):
+            server.resolve("postgres://${invalid_scheme:VAR}@localhost/db")
+        with self.assertRaises(ValueError):
+            server.resolve("env:", shorthand=True)
+
+        # 2. Invalid PostgreSQL DSN syntax rejected before hitting driver
+        for bad_pg_dsn in (
+            "not-a-valid-dsn",
+            "mysql://localhost:3306/db",
+            "postgres://",
+            "postgres:///mydb",
+            "postgres://localhost:notaport/mydb",
+            "postgres://localhost:99999/mydb",
+        ):
+            with self.assertRaises(ValueError, msg=f"Expected ValueError for {bad_pg_dsn}"):
+                server.validate_dsn_syntax("postgres", bad_pg_dsn)
+            db = server.Postgres("postgres:bad", {"type": "postgres", "dsn": bad_pg_dsn})
+            with self.assertRaises(ValueError):
+                db.get_dsn()
+
+        # 3. Invalid Oracle DSN syntax rejected before hitting driver
+        for bad_ora_dsn in (
+            "postgres://localhost:5432/orcl",
+            "ro_user/secret@",
+            "localhost:notaport/ORCL",
+            "localhost:1521/",
+            "user@host1@host2/ORCL",
+        ):
+            with self.assertRaises(ValueError, msg=f"Expected ValueError for {bad_ora_dsn}"):
+                server.validate_dsn_syntax("oracle", bad_ora_dsn)
+            db = server.Oracle("oracle:bad", {"type": "oracle", "dsn": bad_ora_dsn, "user": "ro"})
+            with self.assertRaises(ValueError):
+                db.get_dsn()
+
 
 if __name__ == "__main__":
     unittest.main()

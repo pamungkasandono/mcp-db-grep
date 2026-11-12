@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Prevented false-positive raw secret detection when `${env:...}` or `${file:...}` references are used in DSN username, host, or port without an inline plaintext password.
+- Validated Oracle `user` requirement against the resolved DSN so full Oracle DSNs loaded via `env:` / `file:` (`user/pass@host:port/service`) work without a duplicate `user` key.
 - Removed unreachable duplicate `try/except/finally` block in `server.ping_database()` and deduplicated temporary config setup in `tests/test_server_logic.py` for cross-platform file locking compatibility.
 
 ### Changed
+- Added pre-driver DSN syntax validation (`validate_dsn_syntax`), malformed interpolation syntax checks, and `shorthand=True` support (`env:VAR`, `file:/path`) for `dsn` fields in `server.py`.
 - Unified database configuration validation, default inheritance, DSN secret extraction (`_extract_dsn_passwords`), and raw-secret scanning (`_config_has_raw_secrets`, `_validate_db_entry`) across `read_config()`, `databases()`, `inspect_config()`, and `DB.get_dsn()` in `server.py`.
 - Consolidated cross-platform config path helpers (`_appdata_config_path`, `_home_config_path`), harness detection (`_detect_path_or_bin`), and JSON MCP registration (`_install_json_mcp`) in `installer.py`.
 - Unified database key resolution (`resolve_db_keys`) in `server.py` and reused `server.execute_connection_check()` inside `cli.run_check_connection_cli()`.

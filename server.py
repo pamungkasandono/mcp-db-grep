@@ -55,8 +55,13 @@ def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None =
             if secrets_pool is not None and val:
                 secrets_pool.add(val)
             return val
+        if value.strip() in ("env:", "file:"):
+            raise ValueError(f"Empty target in shorthand reference: '{value}'")
         if m := SHORT.match(value):
-            val = _read(m[1], m[2].strip())
+            target = m[2].strip()
+            if not target:
+                raise ValueError(f"Empty target in shorthand reference: '{value}'")
+            val = _read(m[1], target)
             if secrets_pool is not None and val:
                 secrets_pool.add(val)
             return val
@@ -68,8 +73,9 @@ def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None =
         return quote(v, safe="") if m[3] else v
 
     out = REF.sub(sub, value.replace("$$", "\0"))
-    res = out.replace("\0", "$")
-    return res
+    if "${" in out:
+        raise ValueError(f"Invalid or unclosed interpolation syntax in: '{value}'")
+    return out.replace("\0", "$")
 
 
 DSN_PW_PATTERNS = (
@@ -78,10 +84,22 @@ DSN_PW_PATTERNS = (
 )
 
 
-def _extract_dsn_passwords(dsn: str) -> list[str]:
+def _extract_dsn_passwords(dsn: str, ignore_refs: bool = False) -> list[str]:
     if not dsn or not isinstance(dsn, str):
         return []
-    return [m.group(1) for pat in DSN_PW_PATTERNS if (m := pat.search(dsn))]
+    target = REF.sub("__REF__", dsn) if ignore_refs else dsn
+    passwords = [m.group(1) for pat in DSN_PW_PATTERNS if (m := pat.search(target))]
+    if ignore_refs:
+        return [p for p in passwords if "__REF__" not in p]
+    return passwords
+
+
+def _detect_source_kind(raw_val: str) -> str | None:
+    if raw_val.startswith("env:") or "${env:" in raw_val:
+        return "env"
+    if raw_val.startswith("file:") or "${file:" in raw_val:
+        return "file"
+    return None
 
 
 def has_raw_secret(cfg: dict) -> bool:
@@ -94,7 +112,62 @@ def has_raw_secret(cfg: dict) -> bool:
         if not is_ref:
             return True
 
-    return any("${" not in p for p in _extract_dsn_passwords(cfg.get("dsn", "")))
+    dsn = cfg.get("dsn", "")
+    if not dsn or not isinstance(dsn, str):
+        return False
+    if dsn.startswith(("env:", "file:")):
+        return False
+    dsn_check = dsn[4:] if dsn.startswith("raw:") else dsn
+    return bool(_extract_dsn_passwords(dsn_check, ignore_refs=True))
+
+
+def validate_dsn_syntax(driver_type: str, dsn: str) -> None:
+    if not dsn or not isinstance(dsn, str) or not dsn.strip():
+        raise ValueError("DSN cannot be empty")
+    s = dsn.strip()
+
+    if "${" in s or s.startswith(("env:", "file:", "raw:")):
+        raise ValueError(f"Unresolved reference or invalid prefix in DSN: '{s}'")
+
+    if driver_type == "postgres":
+        if s.startswith(("postgres://", "postgresql://")):
+            rest = s.split("://", 1)[1]
+            if not rest or rest.startswith("/") or any(c.isspace() for c in s):
+                raise ValueError(f"Invalid PostgreSQL URI DSN syntax: '{s}'")
+            host_part = rest.split("/", 1)[0].rsplit("@", 1)[-1]
+            if not host_part:
+                raise ValueError(f"Missing host in PostgreSQL DSN: '{s}'")
+            if ":" in host_part and not host_part.endswith("]"):
+                port_str = host_part.rsplit(":", 1)[1]
+                if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+                    raise ValueError(f"Invalid port '{port_str}' in PostgreSQL DSN: '{s}'")
+        elif "=" in s:
+            pairs = [p for p in s.split() if p]
+            if not all(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*=.+$", p) for p in pairs):
+                raise ValueError(f"Invalid PostgreSQL conninfo DSN syntax: '{s}'")
+        else:
+            raise ValueError(
+                f"Invalid PostgreSQL DSN syntax: '{s}'. Expected 'postgres://...' URI or 'key=value' conninfo"
+            )
+
+    elif driver_type == "oracle":
+        if "://" in s:
+            raise ValueError(f"Invalid Oracle DSN syntax (unexpected URI scheme): '{s}'")
+        if s.upper().startswith("(DESCRIPTION"):
+            if s.count("(") != s.count(")"):
+                raise ValueError(f"Unbalanced parentheses in Oracle TNS DSN: '{s}'")
+            return
+        if any(c.isspace() for c in s) or s.count("@") > 1:
+            raise ValueError(f"Invalid Oracle DSN syntax: '{s}'")
+        target = s.split("@", 1)[1] if "@" in s else s
+        target = target.lstrip("/")
+        if not target or target.endswith("/") or target.startswith(":"):
+            raise ValueError(f"Invalid Oracle target host/service in DSN: '{s}'")
+        host_port = target.split("/", 1)[0]
+        if ":" in host_port:
+            host, port_str = host_port.rsplit(":", 1)
+            if not host or not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+                raise ValueError(f"Invalid host or port in Oracle DSN: '{s}'")
 
 
 def _config_has_raw_secrets(raw_dbs: dict) -> bool:
@@ -120,10 +193,9 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
     if unknown_keys:
         errors.append(f"Unknown configuration key(s): {', '.join(sorted(unknown_keys))}")
 
-    if not cfg.get("dsn"):
+    raw_dsn = cfg.get("dsn")
+    if not raw_dsn:
         errors.append("Missing required field 'dsn'")
-    if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
-        errors.append("Missing required field 'user' for Oracle")
 
     if "auto_tables" in cfg:
         if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
@@ -138,25 +210,33 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
     auth_source = None
     try:
         test_pool = set()
-        resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
+        resolved_dsn = ""
+        if raw_dsn:
+            resolved_dsn = resolve(str(raw_dsn), shorthand=True, secrets_pool=test_pool)
+            validate_dsn_syntax(driver_type, resolved_dsn)
+
+        if driver_type == "oracle" and not cfg.get("user") and ("/" not in resolved_dsn):
+            errors.append("Missing required field 'user' for Oracle")
+
         if "user" in cfg:
             resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
         if "password" in cfg:
             p_str = str(cfg["password"])
             resolve(p_str, shorthand=True, secrets_pool=test_pool)
-            if p_str.startswith("env:") or "${env:" in p_str:
-                auth_source = "env"
-            elif p_str.startswith("file:") or "${file:" in p_str:
-                auth_source = "file"
-            else:
-                auth_source = "raw"
+            auth_source = _detect_source_kind(p_str) or "raw"
         elif cfg.get("password_env"):
             p_env = cfg["password_env"]
             if p_env not in os.environ:
                 raise ValueError(f"Environment variable '{p_env}' is not set")
             auth_source = f"env:{p_env}"
         else:
-            auth_source = "dsn / none"
+            dsn_src = _detect_source_kind(str(raw_dsn or ""))
+            if dsn_src:
+                auth_source = dsn_src
+            elif has_raw_secret(cfg):
+                auth_source = "raw"
+            else:
+                auth_source = "dsn / none"
     except Exception as e:
         errors.append(str(e))
 
@@ -274,7 +354,8 @@ class DB:
         return ""
 
     def get_dsn(self) -> str:
-        dsn = resolve(self.cfg.get("dsn", ""), shorthand=False, secrets_pool=self.secrets)
+        dsn = resolve(self.cfg.get("dsn", ""), shorthand=True, secrets_pool=self.secrets)
+        validate_dsn_syntax(self.cfg.get("type", "postgres"), dsn)
         self.secrets.update(_extract_dsn_passwords(dsn))
         return dsn
 
