@@ -26,6 +26,7 @@ class TestCli(unittest.TestCase):
         self.assertIn("--server", res.stdout)
         self.assertIn("--monitor", res.stdout)
         self.assertIn("--init", res.stdout)
+        self.assertIn("--config", res.stdout)
         self.assertIn("--check-config", res.stdout)
         self.assertIn("--check-connection", res.stdout)
         self.assertIn("--check-update", res.stdout)

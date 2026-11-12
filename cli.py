@@ -195,6 +195,12 @@ def main():
         help="Initialize default config, rules, and register with AI clients",
     )
     group.add_argument(
+        "--config",
+        nargs="*",
+        metavar="CMD",
+        help="Manage databases in config.toml (interactive dashboard, or subcommands: list, add, disable, enable, delete, edit)",
+    )
+    group.add_argument(
         "--check-config",
         action="store_true",
         help="Validate configuration syntax, driver definitions, permissions, and credentials",
@@ -245,6 +251,44 @@ def main():
     elif args.init:
         import installer
         installer.run_init(target_harness=args.client)
+    elif args.config is not None:
+        import config_manager
+        cfg_args = args.config
+        if not cfg_args:
+            config_manager.run_interactive_dashboard()
+        else:
+            sub = cfg_args[0].lower()
+            if sub in ("list", "ls"):
+                raw, entries = config_manager.read_config_entries()
+                if not entries:
+                    print("No databases configured.")
+                for idx, e in enumerate(entries, 1):
+                    status = "✓ ACTIVE" if e.enabled else f"# DISABLED ({e.reason})" if e.reason else "# DISABLED"
+                    print(f"[{idx}] {e.key:<28} [{status}]")
+            elif sub == "disable":
+                if len(cfg_args) < 2:
+                    print("Usage: db-grep --config disable <DB> [reason]")
+                else:
+                    target = cfg_args[1]
+                    reason = " ".join(cfg_args[2:]) if len(cfg_args) > 2 else ""
+                    config_manager.disable_entry(target, reason)
+            elif sub == "enable":
+                if len(cfg_args) < 2:
+                    print("Usage: db-grep --config enable <DB>")
+                else:
+                    config_manager.enable_entry(cfg_args[1])
+            elif sub in ("del", "delete", "rm"):
+                if len(cfg_args) < 2:
+                    print("Usage: db-grep --config delete <DB>")
+                else:
+                    config_manager.delete_entry(cfg_args[1], confirm=False)
+            elif sub == "add":
+                config_manager.prompt_add_interactive()
+            elif sub in ("view", "edit"):
+                config_manager.view_raw_config()
+            else:
+                print(f"Unknown config command: {sub}")
+                print("Available commands: list, add, disable, enable, delete, edit")
     elif args.check_config:
         run_check_config_cli()
     elif args.check_connection is not None:
