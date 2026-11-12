@@ -384,11 +384,11 @@ conns: dict[str, DB] = {}
 
 
 def resolve_db_key(requested_name: str, cfgs: dict) -> str:
-    # 1. Exact match (e.g. "postgres:ecommerce-dev" or "inventory-core")
+    # 1. Exact full key match (e.g. "postgres:ecommerce-dev")
     if requested_name in cfgs:
         return requested_name
 
-    # 2. Check if requested name matches an unqualified short name
+    # 2. Short name: resolve only if unambiguous
     matches = [k for k in cfgs if k.endswith(f":{requested_name}")]
     if len(matches) == 1:
         return matches[0]
@@ -397,12 +397,6 @@ def resolve_db_key(requested_name: str, cfgs: dict) -> str:
             f"Database name '{requested_name}' is ambiguous across multiple types: {', '.join(matches)}. "
             f"Specify the type prefix explicitly (e.g. '{matches[0]}')."
         )
-
-    # 3. Handle pgsql: alias to postgres:
-    if requested_name.startswith("pgsql:"):
-        aliased = f"postgres:{requested_name[6:]}"
-        if aliased in cfgs:
-            return aliased
 
     available = []
     for k in cfgs:
@@ -413,6 +407,29 @@ def resolve_db_key(requested_name: str, cfgs: dict) -> str:
                 available.append(short)
 
     raise ValueError(f"db '{requested_name}' does not exist. Available choices: {', '.join(available)}")
+
+
+def resolve_db_keys_for_check(token: str, cfgs: dict) -> list[str]:
+    """
+    For check_connection: short name matches multiple = run all of them.
+    Full key (postgres:name or oracle:name) = exactly one.
+    No match = error.
+    """
+    # 1. Exact full key match
+    if token in cfgs:
+        return [token]
+
+    # 2. Short name: return ALL matches (run all, not error)
+    matches = [k for k in cfgs if k.endswith(f":{token}")]
+    if matches:
+        return matches
+
+    available = list(dict.fromkeys(
+        part
+        for k in cfgs
+        for part in ([k] + ([k.split(":", 1)[1]] if ":" in k else []))
+    ))
+    raise ValueError(f"db '{token}' does not exist. Available choices: {', '.join(available)}")
 
 
 def get_db(name: str):
@@ -845,12 +862,11 @@ def execute_connection_check(target: str = "all") -> list[dict]:
     if target_str.lower() in ("all", "*"):
         targets_to_check = list(all_dbs.keys())
     else:
-        # Support comma or space separated names
         tokens = [t.strip() for t in re.split(r"[,;\s]+", target_str) if t.strip()]
         for token in tokens:
-            resolved = resolve_db_key(token, all_dbs)
-            if resolved not in targets_to_check:
-                targets_to_check.append(resolved)
+            for resolved in resolve_db_keys_for_check(token, all_dbs):
+                if resolved not in targets_to_check:
+                    targets_to_check.append(resolved)
 
     results = []
     for key in targets_to_check:

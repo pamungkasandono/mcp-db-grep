@@ -84,9 +84,9 @@ dsn = "postgres://user@localhost:5432/ecom"
                 resolved_ora = server.resolve_db_key("oracle:inventory-core", dbs)
                 self.assertEqual(resolved_ora, "oracle:inventory-core")
 
-                # 4. Alias pgsql:inventory-core works
-                resolved_alias = server.resolve_db_key("pgsql:inventory-core", dbs)
-                self.assertEqual(resolved_alias, "postgres:inventory-core")
+                # 4. pgsql: alias is NOT supported — user must write postgres:
+                with self.assertRaises(ValueError):
+                    server.resolve_db_key("pgsql:inventory-core", dbs)
 
                 # 5. list_databases tool surfaces full qualified name on collision
                 out_str = asyncio.run(server.list_databases())
@@ -247,6 +247,42 @@ dsn = "postgres://localhost/prod"
                     self.assertEqual(len(res), 1)
                     self.assertEqual(res[0]["status"], "connected")
                     self.assertEqual(res[0]["query"], "SELECT 1;")
+
+    def test_resolve_db_keys_for_check_both_run_on_duplicate(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.inventory-core]
+dsn = "postgres://localhost/inv_pg"
+
+[db.oracle.inventory-core]
+dsn = "localhost:1521/ORCL"
+user = "ro_user"
+
+[db.postgres.ecommerce-dev]
+dsn = "postgres://localhost/ecom"
+"""
+        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
+            tmp.write(sample_toml)
+            tmp.flush()
+
+            with patch.object(server, "CONFIG", Path(tmp.name)):
+                dbs = server.databases()
+
+                # Short name matching two DBs -> returns BOTH (both run)
+                resolved = server.resolve_db_keys_for_check("inventory-core", dbs)
+                self.assertEqual(sorted(resolved), ["oracle:inventory-core", "postgres:inventory-core"])
+
+                # Explicit prefix -> returns only the specified one
+                resolved_pg = server.resolve_db_keys_for_check("postgres:inventory-core", dbs)
+                self.assertEqual(resolved_pg, ["postgres:inventory-core"])
+
+                resolved_ora = server.resolve_db_keys_for_check("oracle:inventory-core", dbs)
+                self.assertEqual(resolved_ora, ["oracle:inventory-core"])
+
+                # pgsql: prefix is NOT an alias, must raise
+                with self.assertRaises(ValueError):
+                    server.resolve_db_keys_for_check("pgsql:inventory-core", dbs)
 
     def test_query_filter_rejects_non_select(self):
         sql_insert = "INSERT INTO users (name) VALUES ('alice')"

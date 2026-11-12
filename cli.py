@@ -147,9 +147,9 @@ def run_check_connection_cli(targets: list[str] | str):
             tokens.extend([t.strip() for t in item.replace(",", " ").split() if t.strip()])
 
         for t in tokens:
-            resolved = server.resolve_db_key(t, all_dbs)
-            if resolved not in selected_keys:
-                selected_keys.append(resolved)
+            for resolved in server.resolve_db_keys_for_check(t, all_dbs):
+                if resolved not in selected_keys:
+                    selected_keys.append(resolved)
 
     print(f"\nChecking {len(selected_keys)} database connection(s)...")
     has_failure = False
