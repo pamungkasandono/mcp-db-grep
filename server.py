@@ -72,27 +72,95 @@ def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None =
     return res
 
 
+DSN_PW_PATTERNS = (
+    re.compile(r"://[^/@:]+:([^/@]+)@"),
+    re.compile(r"^[^/@:]+/([^/@]+)@"),
+)
+
+
+def _extract_dsn_passwords(dsn: str) -> list[str]:
+    if not dsn or not isinstance(dsn, str):
+        return []
+    return [m.group(1) for pat in DSN_PW_PATTERNS if (m := pat.search(dsn))]
+
+
 def has_raw_secret(cfg: dict) -> bool:
     pw = cfg.get("password")
     if pw is not None:
         pw_str = str(pw)
         is_ref = (
-            pw_str.startswith("env:")
-            or pw_str.startswith("file:")
-            or bool(REF.search(pw_str))
+            pw_str.startswith(("env:", "file:")) or bool(REF.search(pw_str))
         ) and not pw_str.startswith("raw:")
         if not is_ref:
             return True
 
-    dsn = cfg.get("dsn", "")
-    if dsn and isinstance(dsn, str):
-        m = re.search(r"://[^/@:]+:([^/@]+)@", dsn)
-        if m and "${" not in m.group(1):
-            return True
-        m_ora = re.search(r"^[^/@:]+/([^/@]+)@", dsn)
-        if m_ora and "${" not in m_ora.group(1):
-            return True
-    return False
+    return any("${" not in p for p in _extract_dsn_passwords(cfg.get("dsn", "")))
+
+
+def _config_has_raw_secrets(raw_dbs: dict) -> bool:
+    if not isinstance(raw_dbs, dict):
+        return False
+    return any(
+        isinstance(cfg, dict) and has_raw_secret(cfg)
+        for table in raw_dbs.values()
+        if isinstance(table, dict)
+        for cfg in table.values()
+    )
+
+
+def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tuple[dict | None, str | None, list[str]]:
+    if not isinstance(sub_cfg, dict):
+        return None, None, ["Configuration must be a key-value table"]
+
+    cfg = dict(sub_cfg)
+    cfg["type"] = driver_type
+    errors = []
+
+    unknown_keys = set(cfg.keys()) - KNOWN_DB_KEYS
+    if unknown_keys:
+        errors.append(f"Unknown configuration key(s): {', '.join(sorted(unknown_keys))}")
+
+    if not cfg.get("dsn"):
+        errors.append("Missing required field 'dsn'")
+    if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
+        errors.append("Missing required field 'user' for Oracle")
+
+    if "auto_tables" in cfg:
+        if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
+            errors.append("'auto_tables' must be a list of strings")
+
+    # Inheritance (auto_tables is NEVER inherited)
+    cfg["auto_metadata"] = cfg.get("auto_metadata", defaults.get("auto_metadata", True))
+    cfg["max_rows"] = cfg.get("max_rows", defaults.get("max_rows", 100))
+    cfg["timeout_ms"] = cfg.get("timeout_ms", defaults.get("timeout_ms", 10_000))
+    cfg.setdefault("auto_tables", [])
+
+    auth_source = None
+    try:
+        test_pool = set()
+        resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
+        if "user" in cfg:
+            resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
+        if "password" in cfg:
+            p_str = str(cfg["password"])
+            resolve(p_str, shorthand=True, secrets_pool=test_pool)
+            if p_str.startswith("env:") or "${env:" in p_str:
+                auth_source = "env"
+            elif p_str.startswith("file:") or "${file:" in p_str:
+                auth_source = "file"
+            else:
+                auth_source = "raw"
+        elif cfg.get("password_env"):
+            p_env = cfg["password_env"]
+            if p_env not in os.environ:
+                raise ValueError(f"Environment variable '{p_env}' is not set")
+            auth_source = f"env:{p_env}"
+        else:
+            auth_source = "dsn / none"
+    except Exception as e:
+        errors.append(str(e))
+
+    return cfg, auth_source, errors
 
 
 def extract_tables(sql: str, dialect: str = "postgres") -> set[str]:
@@ -126,19 +194,7 @@ def read_config():
             raise ValueError(f"TOML parse error in {CONFIG}: {e}")
 
     # Enforce chmod 600 if config contains raw secrets
-    has_raw = False
-    raw_dbs = raw_cfg.get("db", {})
-    if isinstance(raw_dbs, dict):
-        for driver_type, table in raw_dbs.items():
-            if isinstance(table, dict):
-                for name, cfg in table.items():
-                    if isinstance(cfg, dict) and has_raw_secret(cfg):
-                        has_raw = True
-                        break
-            if has_raw:
-                break
-
-    if has_raw and os.name == "posix":
+    if _config_has_raw_secrets(raw_cfg.get("db", {})) and os.name == "posix":
         mode = CONFIG.stat().st_mode & 0o777
         if mode & 0o077:
             raise ValueError(
@@ -164,10 +220,6 @@ def databases():
     if unknown_defs:
         raise ValueError(f"Unknown key(s) in [defaults]: {', '.join(sorted(unknown_defs))}")
 
-    default_auto_meta = defaults.get("auto_metadata", True)
-    default_max_rows = defaults.get("max_rows", 100)
-    default_timeout_ms = defaults.get("timeout_ms", 10_000)
-
     normalized = {}
 
     for driver_type, table in raw_db.items():
@@ -182,55 +234,10 @@ def databases():
 
         for name, sub_cfg in table.items():
             composite_key = f"{driver_type}:{name}"
-            if not isinstance(sub_cfg, dict):
-                DISABLED_DATABASES[composite_key] = "Configuration must be a key-value table"
+            cfg, _, errors = _validate_db_entry(driver_type, sub_cfg, defaults)
+            if errors:
+                DISABLED_DATABASES[composite_key] = errors[0]
                 continue
-
-            cfg = dict(sub_cfg)
-            cfg["type"] = driver_type
-
-            # Check unknown keys
-            unknown_keys = set(cfg.keys()) - KNOWN_DB_KEYS
-            if unknown_keys:
-                DISABLED_DATABASES[composite_key] = f"Unknown configuration key(s): {', '.join(sorted(unknown_keys))}"
-                continue
-
-            # Check required fields
-            if not cfg.get("dsn"):
-                DISABLED_DATABASES[composite_key] = "Missing required field 'dsn'"
-                continue
-            if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
-                DISABLED_DATABASES[composite_key] = "Missing required field 'user' for Oracle"
-                continue
-
-            # Check auto_tables format
-            if "auto_tables" in cfg:
-                if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
-                    DISABLED_DATABASES[composite_key] = "'auto_tables' must be a list of strings"
-                    continue
-
-            # Inheritance (auto_tables is NEVER inherited)
-            cfg["auto_metadata"] = cfg.get("auto_metadata", default_auto_meta)
-            cfg["max_rows"] = cfg.get("max_rows", default_max_rows)
-            cfg["timeout_ms"] = cfg.get("timeout_ms", default_timeout_ms)
-            cfg.setdefault("auto_tables", [])
-
-            # Dry-run interpolation validation per DB
-            try:
-                test_pool = set()
-                resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
-                if "user" in cfg:
-                    resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
-                if "password" in cfg:
-                    resolve(str(cfg["password"]), shorthand=True, secrets_pool=test_pool)
-                elif cfg.get("password_env"):
-                    p_env = cfg["password_env"]
-                    if p_env not in os.environ:
-                        raise ValueError(f"Environment variable '{p_env}' is not set")
-            except Exception as e:
-                DISABLED_DATABASES[composite_key] = str(e)
-                continue
-
             normalized[composite_key] = cfg
 
     if not normalized and not DISABLED_DATABASES:
@@ -268,12 +275,7 @@ class DB:
 
     def get_dsn(self) -> str:
         dsn = resolve(self.cfg.get("dsn", ""), shorthand=False, secrets_pool=self.secrets)
-        m = re.search(r"://[^/@:]+:([^/@]+)@", dsn)
-        if m:
-            self.secrets.add(m.group(1))
-        m_ora = re.search(r"^[^/@:]+/([^/@]+)@", dsn)
-        if m_ora:
-            self.secrets.add(m_ora.group(1))
+        self.secrets.update(_extract_dsn_passwords(dsn))
         return dsn
 
     def redact(self, text: str) -> str:
@@ -678,15 +680,7 @@ def inspect_config() -> dict:
         return report
 
     # Check for raw secrets across all configs
-    has_raw = False
-    for driver_type, table in raw_dbs.items():
-        if isinstance(table, dict):
-            for db_name, cfg in table.items():
-                if isinstance(cfg, dict) and has_raw_secret(cfg):
-                    has_raw = True
-                    break
-        if has_raw:
-            break
+    has_raw = _config_has_raw_secrets(raw_dbs)
     report["has_raw_secrets"] = has_raw
 
     if os.name == "posix":
@@ -703,6 +697,7 @@ def inspect_config() -> dict:
                 f"Recommended: chmod 600 {CONFIG}"
             )
 
+    eff_defaults = defaults if isinstance(defaults, dict) else {}
     for driver_type, table in raw_dbs.items():
         if not isinstance(table, dict):
             report["errors"].append(f"[db.{driver_type}] must be a table containing database definitions.")
@@ -715,71 +710,20 @@ def inspect_config() -> dict:
             continue
 
         for db_name, cfg in table.items():
+            cfg_norm, auth_source, errors = _validate_db_entry(driver_type, cfg, eff_defaults)
             db_report = {
                 "name": db_name,
                 "key": f"{driver_type}:{db_name}",
                 "driver": driver_type,
-                "description": cfg.get("description", "") if isinstance(cfg, dict) else "",
-                "auto_metadata": cfg.get("auto_metadata", defaults.get("auto_metadata", True)) if isinstance(cfg, dict) else True,
-                "auto_tables": cfg.get("auto_tables", []) if isinstance(cfg, dict) else [],
-                "valid": True,
-                "errors": [],
+                "description": cfg_norm.get("description", "") if cfg_norm else "",
+                "auto_metadata": cfg_norm["auto_metadata"] if cfg_norm else True,
+                "auto_tables": cfg_norm["auto_tables"] if cfg_norm and isinstance(cfg_norm.get("auto_tables"), list) else [],
+                "valid": not errors,
+                "errors": errors,
             }
-
-            if not isinstance(cfg, dict):
-                db_report["valid"] = False
-                db_report["errors"].append("Configuration must be a key-value table.")
-                report["databases"].append(db_report)
-                report["valid"] = False
-                continue
-
-            # Check unknown keys
-            unknown_keys = set(cfg.keys()) - KNOWN_DB_KEYS
-            if unknown_keys:
-                db_report["valid"] = False
-                db_report["errors"].append(f"Unknown key(s): {', '.join(sorted(unknown_keys))}")
-
-            # Check required fields
-            if not cfg.get("dsn"):
-                db_report["valid"] = False
-                db_report["errors"].append("Missing required field 'dsn'")
-            if driver_type == "oracle" and not cfg.get("user") and ("/" not in cfg.get("dsn", "")):
-                db_report["valid"] = False
-                db_report["errors"].append("Missing required field 'user' for Oracle")
-
-            # Check auto_tables
-            if "auto_tables" in cfg:
-                if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
-                    db_report["valid"] = False
-                    db_report["errors"].append("'auto_tables' must be a list of strings")
-
-            # Check secret resolution & auth source
-            try:
-                test_pool = set()
-                resolve(cfg.get("dsn", ""), shorthand=False, secrets_pool=test_pool)
-                if "user" in cfg:
-                    resolve(str(cfg["user"]), shorthand=True, secrets_pool=test_pool)
-                if "password" in cfg:
-                    resolve(str(cfg["password"]), shorthand=True, secrets_pool=test_pool)
-                    p_str = str(cfg["password"])
-                    if p_str.startswith("env:") or "${env:" in p_str:
-                        db_report["auth_source"] = "env"
-                    elif p_str.startswith("file:") or "${file:" in p_str:
-                        db_report["auth_source"] = "file"
-                    else:
-                        db_report["auth_source"] = "raw"
-                elif cfg.get("password_env"):
-                    p_env = cfg["password_env"]
-                    if p_env not in os.environ:
-                        raise ValueError(f"Environment variable '{p_env}' is not set")
-                    db_report["auth_source"] = f"env:{p_env}"
-                else:
-                    db_report["auth_source"] = "dsn / none"
-            except Exception as e:
-                db_report["valid"] = False
-                db_report["errors"].append(str(e))
-
-            if not db_report["valid"]:
+            if auth_source:
+                db_report["auth_source"] = auth_source
+            if errors:
                 report["valid"] = False
 
             report["databases"].append(db_report)
