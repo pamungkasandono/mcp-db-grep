@@ -106,14 +106,28 @@ def save_config_lines(lines: list[str]):
         CONFIG.chmod(0o600)
 
 
+DRIVER_ALIASES = {"pgsql": "postgres", "ora": "oracle", "my": "mysql"}
+DRIVER_SHORTHANDS = {v: k for k, v in DRIVER_ALIASES.items()}
+
+
+def normalize_db_token(token: str) -> str:
+    t = (token or "").strip()
+    if ":" in t:
+        prefix, rest = t.split(":", 1)
+        canonical = DRIVER_ALIASES.get(prefix.lower())
+        if canonical:
+            return f"{canonical}:{rest}"
+    return t
+
+
 def resolve_entry(target: str, entries: list[ConfigEntry]) -> ConfigEntry | None:
     """
     Resolve target to a single ConfigEntry.
-    - Exact full key match (e.g. 'postgres:inventory-core') -> direct.
+    - Exact full key match or shorthand alias (e.g. 'postgres:inventory-core', 'pgsql:inventory-core') -> direct.
     - Short name match -> OK if exactly one found, error if ambiguous.
     - Prints error message and returns None on failure.
     """
-    t = target.strip()
+    t = normalize_db_token(target)
 
     # 1. Exact full key match
     for e in entries:
@@ -242,7 +256,7 @@ def add_entry(
     auto_metadata: str = "",
     auto_tables: list[str] | None = None,
 ) -> bool:
-    driver = driver.lower().strip()
+    driver = DRIVER_ALIASES.get(driver.lower().strip(), driver.lower().strip())
     if driver not in SUPPORTED_DRIVERS:
         print(f"Error: Unsupported driver '{driver}'. Supported drivers: {', '.join(SUPPORTED_DRIVERS)}")
         return False
@@ -282,10 +296,10 @@ def add_entry(
 def prompt_add_interactive() -> bool:
     print("\n--- Add New Database ---")
     try:
-        drv_choice = input("Driver [1: postgres (default), 2: oracle, 3: mysql]: ").strip().lower()
-        if drv_choice in ("2", "oracle"):
+        drv_choice = input("Driver [1: postgres/pgsql (default), 2: oracle/ora, 3: mysql/my]: ").strip().lower()
+        if drv_choice in ("2", "oracle", "ora"):
             driver = "oracle"
-        elif drv_choice in ("3", "mysql"):
+        elif drv_choice in ("3", "mysql", "my"):
             driver = "mysql"
         else:
             driver = "postgres"

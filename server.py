@@ -564,15 +564,18 @@ class Oracle(DB):
                 pass
 
 
+from config_manager import DRIVER_ALIASES, DRIVER_SHORTHANDS, normalize_db_token
+
 DRIVERS = {"postgres": Postgres, "oracle": Oracle, "mysql": MySQL}
 conns: dict[str, DB] = {}
 
 
 def resolve_db_keys(requested_name: str, cfgs: dict, allow_multiple: bool = False) -> list[str]:
-    if requested_name in cfgs:
-        return [requested_name]
+    norm_name = normalize_db_token(requested_name)
+    if norm_name in cfgs:
+        return [norm_name]
 
-    matches = [k for k in cfgs if k.endswith(f":{requested_name}")]
+    matches = [k for k in cfgs if k.endswith(f":{norm_name}")]
     if matches:
         if len(matches) > 1 and not allow_multiple:
             raise ValueError(
@@ -602,9 +605,10 @@ def get_db(name: str):
     try:
         resolved_key = resolve_db_key(name, cfgs)
     except ValueError as e:
+        norm_name = normalize_db_token(name)
         # Check if the requested name matches a disabled database
         for k, err in DISABLED_DATABASES.items():
-            if k == name or k.endswith(f":{name}"):
+            if k == norm_name or k.endswith(f":{norm_name}"):
                 raise ValueError(f"Database [{k}] is disabled: {err}") from None
         raise e
 
@@ -1001,6 +1005,9 @@ async def list_databases() -> str:
         # If collision exists for this short name, present the full qualified name as primary
         effective_name = key if len(short_names.get(short, [])) > 1 else short
         aliases = [key] if effective_name != key else ([short] if short != key else [])
+        shorthand_prefix = DRIVER_SHORTHANDS.get(c["type"])
+        if shorthand_prefix:
+            aliases.append(f"{shorthand_prefix}:{short}")
         
         item = {
             "db": effective_name,

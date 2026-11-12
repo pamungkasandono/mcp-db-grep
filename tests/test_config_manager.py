@@ -163,6 +163,15 @@ user = "ro_user"
                 result_ora = config_manager.resolve_entry("oracle:inventory-core", entries)
                 self.assertIsNotNone(result_ora)
                 self.assertEqual(result_ora.key, "oracle:inventory-core")
+
+                # Shorthand prefixes pgsql: and ora: -> resolve accurately
+                result_pgsql = config_manager.resolve_entry("pgsql:inventory-core", entries)
+                self.assertIsNotNone(result_pgsql)
+                self.assertEqual(result_pgsql.key, "postgres:inventory-core")
+
+                result_ora_short = config_manager.resolve_entry("ora:inventory-core", entries)
+                self.assertIsNotNone(result_ora_short)
+                self.assertEqual(result_ora_short.key, "oracle:inventory-core")
         finally:
             tmp_path.unlink(missing_ok=True)
 

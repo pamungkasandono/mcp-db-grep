@@ -89,9 +89,9 @@ dsn = "postgres://user@localhost:5432/ecom"
             resolved_ora = server.resolve_db_key("oracle:inventory-core", dbs)
             self.assertEqual(resolved_ora, "oracle:inventory-core")
 
-            # 4. pgsql: alias is NOT supported — user must write postgres:
-            with self.assertRaises(ValueError):
-                server.resolve_db_key("pgsql:inventory-core", dbs)
+            # 4. Shorthand aliases pgsql: and ora: resolve to canonical keys
+            self.assertEqual(server.resolve_db_key("pgsql:inventory-core", dbs), "postgres:inventory-core")
+            self.assertEqual(server.resolve_db_key("ora:inventory-core", dbs), "oracle:inventory-core")
 
             # 5. list_databases tool surfaces full qualified name on collision
             out_str = asyncio.run(server.list_databases())
@@ -265,9 +265,9 @@ dsn = "postgres://localhost/ecom"
             resolved_ora = server.resolve_db_keys_for_check("oracle:inventory-core", dbs)
             self.assertEqual(resolved_ora, ["oracle:inventory-core"])
 
-            # pgsql: prefix is NOT an alias, must raise
-            with self.assertRaises(ValueError):
-                server.resolve_db_keys_for_check("pgsql:inventory-core", dbs)
+            # Shorthand prefixes pgsql: and ora: also resolve accurately
+            self.assertEqual(server.resolve_db_keys_for_check("pgsql:inventory-core", dbs), ["postgres:inventory-core"])
+            self.assertEqual(server.resolve_db_keys_for_check("ora:inventory-core", dbs), ["oracle:inventory-core"])
 
     def test_query_filter_rejects_non_select(self):
         sql_insert = "INSERT INTO users (name) VALUES ('alice')"
@@ -290,6 +290,7 @@ description = "MySQL Orders DB"
             dbs = server.databases()
             self.assertIn("mysql:orders-app", dbs)
             self.assertEqual(server.resolve_db_key("orders-app", dbs), "mysql:orders-app")
+            self.assertEqual(server.resolve_db_key("my:orders-app", dbs), "mysql:orders-app")
 
             mysql_inst = server.MySQL("mysql:orders-app", dbs["mysql:orders-app"])
             self.assertEqual(mysql_inst.default_schema, "orders_db")
