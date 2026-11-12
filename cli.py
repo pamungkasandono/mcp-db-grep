@@ -100,12 +100,7 @@ def run_check_connection_cli(targets: list[str] | str):
         sys.exit(0)
 
     # Normalize targets to list of strings
-    if isinstance(targets, str):
-        target_list = [targets]
-    else:
-        target_list = list(targets)
-
-    selected_keys = []
+    target_list = [targets] if isinstance(targets, str) else list(targets)
 
     # If no targets passed, enter interactive selection
     if not target_list:
@@ -126,7 +121,7 @@ def run_check_connection_cli(targets: list[str] | str):
             sys.exit(0)
 
         if not choice or choice.lower() in ("a", "all", "*"):
-            selected_keys = db_keys
+            target_list = ["all"]
         elif choice.lower() in ("q", "quit", "exit"):
             print("Cancelled.")
             sys.exit(0)
@@ -135,26 +130,13 @@ def run_check_connection_cli(targets: list[str] | str):
             if not indices:
                 print("No valid database index selected.")
                 sys.exit(1)
-            selected_keys = [db_keys[i] for i in indices]
-    elif len(target_list) == 1 and target_list[0].lower() in ("all", "*"):
-        selected_keys = db_keys
-    else:
-        # Flatten all tokens across multiple positional items and comma separations
-        tokens = []
-        for item in target_list:
-            tokens.extend([t.strip() for t in item.replace(",", " ").split() if t.strip()])
+            target_list = [db_keys[i] for i in indices]
 
-        for t in tokens:
-            for resolved in server.resolve_db_keys_for_check(t, all_dbs):
-                if resolved not in selected_keys:
-                    selected_keys.append(resolved)
-
-    print(f"\nChecking {len(selected_keys)} database connection(s)...")
+    results = server.execute_connection_check(target_list, all_dbs=all_dbs)
+    print(f"\nChecking {len(results)} database connection(s)...")
     has_failure = False
 
-    for key in selected_keys:
-        cfg = all_dbs[key]
-        res = server.ping_database(key, cfg)
+    for res in results:
         if res["status"] == "connected":
             print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
         else:
