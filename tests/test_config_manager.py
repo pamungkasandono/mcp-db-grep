@@ -118,6 +118,16 @@ port = 48260
 
                 content_after = tmp_path.read_text(encoding="utf-8")
                 self.assertNotIn("billing-service", content_after)
+
+                # 3. Add MySQL entry
+                added_mysql = config_manager.add_entry(
+                    driver="mysql",
+                    name="orders-db",
+                    dsn="mysql://localhost:3306/orders",
+                    description="MySQL Orders",
+                )
+                self.assertTrue(added_mysql)
+                self.assertIn("[db.mysql.orders-db]", tmp_path.read_text(encoding="utf-8"))
         finally:
             tmp_path.unlink(missing_ok=True)
 

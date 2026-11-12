@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 import sqlglot
@@ -121,6 +121,19 @@ def has_raw_secret(cfg: dict) -> bool:
     return bool(_extract_dsn_passwords(dsn_check, ignore_refs=True))
 
 
+def _validate_uri_dsn(s: str, label: str) -> None:
+    rest = s.split("://", 1)[1]
+    if not rest or rest.startswith("/") or any(c.isspace() for c in s):
+        raise ValueError(f"Invalid {label} URI DSN syntax: '{s}'")
+    host_part = rest.split("/", 1)[0].rsplit("@", 1)[-1]
+    if not host_part:
+        raise ValueError(f"Missing host in {label} DSN: '{s}'")
+    if ":" in host_part and not host_part.endswith("]"):
+        port_str = host_part.rsplit(":", 1)[1]
+        if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
+            raise ValueError(f"Invalid port '{port_str}' in {label} DSN: '{s}'")
+
+
 def validate_dsn_syntax(driver_type: str, dsn: str) -> None:
     if not dsn or not isinstance(dsn, str) or not dsn.strip():
         raise ValueError("DSN cannot be empty")
@@ -131,16 +144,7 @@ def validate_dsn_syntax(driver_type: str, dsn: str) -> None:
 
     if driver_type == "postgres":
         if s.startswith(("postgres://", "postgresql://")):
-            rest = s.split("://", 1)[1]
-            if not rest or rest.startswith("/") or any(c.isspace() for c in s):
-                raise ValueError(f"Invalid PostgreSQL URI DSN syntax: '{s}'")
-            host_part = rest.split("/", 1)[0].rsplit("@", 1)[-1]
-            if not host_part:
-                raise ValueError(f"Missing host in PostgreSQL DSN: '{s}'")
-            if ":" in host_part and not host_part.endswith("]"):
-                port_str = host_part.rsplit(":", 1)[1]
-                if not port_str.isdigit() or not (1 <= int(port_str) <= 65535):
-                    raise ValueError(f"Invalid port '{port_str}' in PostgreSQL DSN: '{s}'")
+            _validate_uri_dsn(s, "PostgreSQL")
         elif "=" in s:
             pairs = [p for p in s.split() if p]
             if not all(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*=.+$", p) for p in pairs):
@@ -149,6 +153,12 @@ def validate_dsn_syntax(driver_type: str, dsn: str) -> None:
             raise ValueError(
                 f"Invalid PostgreSQL DSN syntax: '{s}'. Expected 'postgres://...' URI or 'key=value' conninfo"
             )
+
+    elif driver_type == "mysql":
+        if s.startswith("mysql://"):
+            _validate_uri_dsn(s, "MySQL")
+        else:
+            raise ValueError(f"Invalid MySQL DSN syntax: '{s}'. Expected 'mysql://...' URI")
 
     elif driver_type == "oracle":
         if "://" in s:
@@ -245,7 +255,7 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
 
 def extract_tables(sql: str, dialect: str = "postgres") -> set[str]:
     try:
-        d_name = "oracle" if dialect == "oracle" else "postgres"
+        d_name = dialect if dialect in ("postgres", "oracle", "mysql") else "postgres"
         parsed = sqlglot.parse_one(sql, read=d_name)
         if not parsed:
             return set()
@@ -329,6 +339,9 @@ def databases():
 # ---------- database ----------
 class DB:
     conn = None
+    LIST_SQL = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s"
+    DESC_SQL = ("SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position")
 
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
@@ -395,10 +408,6 @@ class DB:
 
 
 class Postgres(DB):
-    LIST_SQL = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s"
-    DESC_SQL = ("SELECT column_name, data_type, is_nullable FROM information_schema.columns "
-                "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position")
-
     @property
     def default_schema(self):
         return self.cfg.get("schema", "public")
@@ -423,6 +432,40 @@ class Postgres(DB):
 
     def healthy(self):
         return not (self.conn.closed or self.conn.broken)
+
+
+class MySQL(DB):
+    @property
+    def default_schema(self):
+        if "schema" in self.cfg:
+            return self.cfg["schema"]
+        return urlparse(self.get_dsn()).path.lstrip("/")
+
+    def connect(self):
+        import pymysql
+        dsn = self.get_dsn()
+        parsed = urlparse(dsn)
+        user = self.get_user() or (unquote(parsed.username) if parsed.username else "")
+        pw = self.get_password() or (unquote(parsed.password) if parsed.password else "")
+        db_name = parsed.path.lstrip("/") or self.cfg.get("schema", "")
+        timeout_sec = max(1, int(self.timeout_ms / 1000))
+
+        self.conn = pymysql.connect(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 3306,
+            user=user,
+            password=pw,
+            database=db_name or None,
+            autocommit=True,
+            connect_timeout=timeout_sec,
+            read_timeout=timeout_sec,
+            write_timeout=timeout_sec,
+        )
+        with self.conn.cursor() as cur:
+            cur.execute("SET SESSION TRANSACTION READ ONLY")
+
+    def healthy(self):
+        return bool(self.conn and getattr(self.conn, "open", False))
 
 
 class Oracle(DB):
@@ -462,7 +505,7 @@ class Oracle(DB):
                 pass
 
 
-DRIVERS = {"postgres": Postgres, "oracle": Oracle}
+DRIVERS = {"postgres": Postgres, "oracle": Oracle, "mysql": MySQL}
 conns: dict[str, DB] = {}
 
 
@@ -711,6 +754,7 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
 PING_QUERIES = {
     "postgres": "SELECT 1;",
     "oracle": "SELECT 1 FROM DUAL",
+    "mysql": "SELECT 1;",
 }
 
 

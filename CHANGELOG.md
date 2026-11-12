@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `check_connection` / `--check-connection` now tests all matching databases across drivers when given an unprefixed short name, while `postgres:<name>` or `oracle:<name>` targets a specific driver.
 
 ### Added
+- MySQL driver support (`[db.mysql.<name>]`) via `pymysql` with read-only session enforcement, URI DSN validation (`mysql://...`), `sqlglot` MySQL dialect table extraction, and `--config add` interactive support.
 - `--config` interactive controller and CLI subcommands (`list`, `add`, `disable`, `enable`, `delete`, `edit`) to manage databases without manual file edits.
 - Comment-based non-destructive disable/enable preserving credentials with optional audit reason tags (`# [DISABLED: reason] [db.<driver>.<name>]`).
 - Universal secret interpolation `${env:VAR}`, `${file:/path}`, `${env:VAR|urlenc}`, and shorthand `env:VAR` / `file:/path`.

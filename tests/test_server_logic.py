@@ -278,6 +278,66 @@ dsn = "postgres://localhost/ecom"
         reject_select = None if sql_select.lstrip().lower().startswith(("select", "with")) else "only SELECT/WITH queries allowed"
         self.assertIsNone(reject_select)
 
+    def test_mysql_driver_config_schema_and_ping_mock(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.mysql.orders-app]
+dsn = "mysql://ro_user:my_secret_pw@localhost:3306/orders_db"
+description = "MySQL Orders DB"
+"""
+        with self.temp_config(sample_toml):
+            dbs = server.databases()
+            self.assertIn("mysql:orders-app", dbs)
+            self.assertEqual(server.resolve_db_key("orders-app", dbs), "mysql:orders-app")
+
+            mysql_inst = server.MySQL("mysql:orders-app", dbs["mysql:orders-app"])
+            self.assertEqual(mysql_inst.default_schema, "orders_db")
+            self.assertIn("my_secret_pw", mysql_inst.secrets)
+
+            # Invalid MySQL DSN syntax is rejected before driver
+            with self.assertRaises(ValueError):
+                server.validate_dsn_syntax("mysql", "postgres://localhost:3306/orders_db")
+            with self.assertRaises(ValueError):
+                server.validate_dsn_syntax("mysql", "mysql://localhost:badport/orders_db")
+
+            # SQLGlot MySQL backtick table extraction
+            tables = server.extract_tables("SELECT * FROM `mst_orders` JOIN `ref_status` ON mst_orders.s = ref_status.id", dialect="mysql")
+            self.assertEqual(tables, {"mst_orders", "ref_status"})
+
+            class MockMySQLConn:
+                open = True
+                def cursor(self):
+                    return self
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+                def execute(self, sql, params=()):
+                    pass
+                @property
+                def description(self):
+                    return [("1",)]
+                def fetchmany(self, size):
+                    return [(1,)]
+                def close(self):
+                    self.open = False
+
+            mock_pymysql = MagicMock()
+            mock_pymysql.connect.return_value = MockMySQLConn()
+            with patch.dict(sys.modules, {"pymysql": mock_pymysql}):
+                res = server.ping_database("mysql:orders-app", dbs["mysql:orders-app"])
+                self.assertEqual(res["status"], "connected")
+                self.assertEqual(res["type"], "mysql")
+                self.assertEqual(res["query"], "SELECT 1;")
+                mock_pymysql.connect.assert_called_once()
+                call_kwargs = mock_pymysql.connect.call_args.kwargs
+                self.assertEqual(call_kwargs["host"], "localhost")
+                self.assertEqual(call_kwargs["port"], 3306)
+                self.assertEqual(call_kwargs["user"], "ro_user")
+                self.assertEqual(call_kwargs["password"], "my_secret_pw")
+                self.assertEqual(call_kwargs["database"], "orders_db")
+
 
 if __name__ == "__main__":
     unittest.main()

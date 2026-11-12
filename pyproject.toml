@@ -15,6 +15,7 @@ dependencies = [
     "mcp<2",
     "psycopg",
     "oracledb",
+    "pymysql",
     "pydantic",
     "sqlglot"
 ]

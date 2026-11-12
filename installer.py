@@ -83,6 +83,12 @@ timeout_ms = 10000
 # password = "file:~/.config/db-grep/secrets/payroll"
 # schema = "HR"
 # auto_metadata = false       # structure inspection also requires y/n
+
+# ── MySQL Example: URI DSN + credentials from environment
+# [db.mysql.orders-app]
+# description = "Orders MySQL Database"
+# dsn = "mysql://ro_user:${env:ORDERS_PW|urlenc}@localhost:3306/orders_db"
+# auto_tables = ["mst_*", "ref_*"]
 """
 
 

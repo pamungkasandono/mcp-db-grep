@@ -224,6 +224,14 @@ def delete_entry(target: str, confirm: bool = True) -> bool:
     return True
 
 
+SUPPORTED_DRIVERS = ("postgres", "oracle", "mysql")
+DEFAULT_DSNS = {
+    "postgres": "postgres://ro_user:password@localhost:5432/dbname",
+    "oracle": "localhost:1521/ORCL",
+    "mysql": "mysql://ro_user:password@localhost:3306/dbname",
+}
+
+
 def add_entry(
     driver: str,
     name: str,
@@ -235,8 +243,8 @@ def add_entry(
     auto_tables: list[str] | None = None,
 ) -> bool:
     driver = driver.lower().strip()
-    if driver not in ("postgres", "oracle"):
-        print(f"Error: Unsupported driver '{driver}'. Supported drivers: postgres, oracle")
+    if driver not in SUPPORTED_DRIVERS:
+        print(f"Error: Unsupported driver '{driver}'. Supported drivers: {', '.join(SUPPORTED_DRIVERS)}")
         return False
 
     name = re.sub(r"[^a-zA-Z0-9_-]", "-", name.strip().lower())
@@ -274,15 +282,20 @@ def add_entry(
 def prompt_add_interactive() -> bool:
     print("\n--- Add New Database ---")
     try:
-        drv_choice = input("Driver [1: postgres (default), 2: oracle]: ").strip()
-        driver = "oracle" if drv_choice == "2" or drv_choice.lower() == "oracle" else "postgres"
+        drv_choice = input("Driver [1: postgres (default), 2: oracle, 3: mysql]: ").strip().lower()
+        if drv_choice in ("2", "oracle"):
+            driver = "oracle"
+        elif drv_choice in ("3", "mysql"):
+            driver = "mysql"
+        else:
+            driver = "postgres"
 
-        name = input(f"Database name (e.g. {'inventory-core' if driver == 'postgres' else 'payroll-prod'}): ").strip()
+        name = input(f"Database name (e.g. {'payroll-prod' if driver == 'oracle' else 'inventory-core'}): ").strip()
         if not name:
             print("Cancelled: Name cannot be empty.")
             return False
 
-        default_dsn = "postgres://ro_user:password@localhost:5432/dbname" if driver == "postgres" else "localhost:1521/ORCL"
+        default_dsn = DEFAULT_DSNS[driver]
         dsn = input(f"DSN / Connection string [e.g. {default_dsn}]: ").strip()
         if not dsn:
             print("Cancelled: DSN cannot be empty.")
