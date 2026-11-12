@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unreachable duplicate `try/except/finally` block in `server.ping_database()` and deduplicated temporary config setup in `tests/test_server_logic.py` for cross-platform file locking compatibility.
 
 ### Changed
+- Deduplicated section parsing loop, entry lookup (`_load_target_entry`), and duplicate not-found error messages in `config_manager.py`.
 - Centralized package version resolution in `cli.py` by reusing `updater.get_current_version()`.
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
 - Removed `pgsql:` prefix alias; always use explicit `postgres:<name>` or `oracle:<name>` when specifying driver type.

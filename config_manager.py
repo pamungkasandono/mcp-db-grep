@@ -65,34 +65,33 @@ def read_config_entries() -> tuple[list[str], list[ConfigEntry]]:
         m_active = HEADER_ACTIVE_RE.match(stripped)
         m_disabled = HEADER_DISABLED_RE.match(stripped)
 
-        if m_active:
-            driver, name = m_active.group(1), m_active.group(2)
-            key = f"{driver}:{name}"
+        if m_active or m_disabled:
+            if m_active:
+                driver, name = m_active.group(1), m_active.group(2)
+                enabled, reason = True, ""
+            else:
+                reason = (m_disabled.group(1) or "").strip()
+                driver, name = m_disabled.group(2), m_disabled.group(3)
+                enabled = False
+
             start = i
-            i += 1
             entry_lines = [line]
-            while i < total:
-                next_stripped = raw_lines[i].strip()
-                if SECTION_RE.match(next_stripped):
-                    break
+            i += 1
+            while i < total and not SECTION_RE.match(raw_lines[i].strip()):
                 entry_lines.append(raw_lines[i])
                 i += 1
-            entries.append(ConfigEntry(key, driver, name, enabled=True, start_line=start, end_line=i, lines=entry_lines))
-            continue
-        elif m_disabled:
-            reason = (m_disabled.group(1) or "").strip()
-            driver, name = m_disabled.group(2), m_disabled.group(3)
-            key = f"{driver}:{name}"
-            start = i
-            i += 1
-            entry_lines = [line]
-            while i < total:
-                next_stripped = raw_lines[i].strip()
-                if SECTION_RE.match(next_stripped):
-                    break
-                entry_lines.append(raw_lines[i])
-                i += 1
-            entries.append(ConfigEntry(key, driver, name, enabled=False, reason=reason, start_line=start, end_line=i, lines=entry_lines))
+            entries.append(
+                ConfigEntry(
+                    f"{driver}:{name}",
+                    driver,
+                    name,
+                    enabled=enabled,
+                    reason=reason,
+                    start_line=start,
+                    end_line=i,
+                    lines=entry_lines,
+                )
+            )
             continue
 
         i += 1
@@ -137,24 +136,24 @@ def resolve_entry(target: str, entries: list[ConfigEntry]) -> ConfigEntry | None
     return None
 
 
-def find_entry(target: str, entries: list[ConfigEntry]) -> ConfigEntry | None:
-    return resolve_entry(target, entries)
+find_entry = resolve_entry
+
+
+def _load_target_entry(target: str) -> tuple[list[str], ConfigEntry | None]:
+    raw_lines, entries = read_config_entries()
+    return raw_lines, resolve_entry(target, entries)
 
 
 def disable_entry(target: str, reason: str = "") -> bool:
-    raw_lines, entries = read_config_entries()
-    entry = find_entry(target, entries)
+    raw_lines, entry = _load_target_entry(target)
     if not entry:
-        print(f"Error: Database '{target}' not found in {CONFIG}")
         return False
     if not entry.enabled:
         print(f"Database '{entry.key}' is already disabled.")
         return True
 
-    new_lines = []
     reason_tag = f": {reason.strip()}" if reason.strip() else ""
-    header_comment = f"# [DISABLED{reason_tag}] [db.{entry.driver}.{entry.name}]\n"
-    new_lines.append(header_comment)
+    new_lines = [f"# [DISABLED{reason_tag}] [db.{entry.driver}.{entry.name}]\n"]
 
     for line in entry.lines[1:]:
         if line.strip():
@@ -162,44 +161,35 @@ def disable_entry(target: str, reason: str = "") -> bool:
         else:
             new_lines.append(line)
 
-    updated_full = raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :]
-    save_config_lines(updated_full)
+    save_config_lines(raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :])
     print(f"✓ Disabled '{entry.key}'" + (f" (Reason: {reason})" if reason else ""))
     return True
 
 
 def enable_entry(target: str) -> bool:
-    raw_lines, entries = read_config_entries()
-    entry = find_entry(target, entries)
+    raw_lines, entry = _load_target_entry(target)
     if not entry:
-        print(f"Error: Database '{target}' not found in {CONFIG}")
         return False
     if entry.enabled:
         print(f"Database '{entry.key}' is already active.")
         return True
 
-    new_lines = []
-    new_lines.append(f"[db.{entry.driver}.{entry.name}]\n")
+    new_lines = [f"[db.{entry.driver}.{entry.name}]\n"]
 
     for line in entry.lines[1:]:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            uncommented = re.sub(r"^#\s?", "", line)
-            new_lines.append(uncommented)
+        if line.strip().startswith("#"):
+            new_lines.append(re.sub(r"^#\s?", "", line))
         else:
             new_lines.append(line)
 
-    updated_full = raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :]
-    save_config_lines(updated_full)
+    save_config_lines(raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :])
     print(f"✓ Enabled '{entry.key}'")
     return True
 
 
 def toggle_entry(target: str, reason_prompt: bool = False) -> bool:
-    _, entries = read_config_entries()
-    entry = find_entry(target, entries)
+    _, entry = _load_target_entry(target)
     if not entry:
-        print(f"Error: Database '{target}' not found in {CONFIG}")
         return False
 
     if entry.enabled:
@@ -211,15 +201,12 @@ def toggle_entry(target: str, reason_prompt: bool = False) -> bool:
                 print("\nCancelled.")
                 return False
         return disable_entry(entry.key, reason)
-    else:
-        return enable_entry(entry.key)
+    return enable_entry(entry.key)
 
 
 def delete_entry(target: str, confirm: bool = True) -> bool:
-    raw_lines, entries = read_config_entries()
-    entry = find_entry(target, entries)
+    raw_lines, entry = _load_target_entry(target)
     if not entry:
-        print(f"Error: Database '{target}' not found in {CONFIG}")
         return False
 
     if confirm:
@@ -232,8 +219,7 @@ def delete_entry(target: str, confirm: bool = True) -> bool:
             print("\nCancelled.")
             return False
 
-    updated_full = raw_lines[: entry.start_line] + raw_lines[entry.end_line :]
-    save_config_lines(updated_full)
+    save_config_lines(raw_lines[: entry.start_line] + raw_lines[entry.end_line :])
     print(f"✓ Deleted [{entry.key}] from {CONFIG}")
     return True
 
