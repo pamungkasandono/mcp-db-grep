@@ -1,6 +1,5 @@
 import argparse
 import sys
-from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
 
 # Ensure db-grep directory is on sys.path
@@ -8,10 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-try:
-    __version__ = version("db-grep")
-except PackageNotFoundError:
-    __version__ = "0.1.0"
+from updater import get_current_version
+
+__version__ = get_current_version()
 
 
 def parse_selection_tokens(user_input: str, total_items: int) -> list[int]:
