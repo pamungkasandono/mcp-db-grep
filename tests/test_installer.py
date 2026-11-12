@@ -64,6 +64,42 @@ class TestInstaller(unittest.TestCase):
             finally:
                 installer.get_codex_config_path = original_fn
 
+    def test_install_json_harnesses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            claude_cfg = tmp / "claude.json"
+            roo_cfg = tmp / "roo.json"
+            zed_cfg = tmp / "zed.json"
+
+            orig_claude = installer.get_claude_desktop_config_path
+            orig_roo = installer.get_roo_code_config_path
+            orig_zed = installer.get_zed_config_path
+            installer.get_claude_desktop_config_path = lambda: claude_cfg
+            installer.get_roo_code_config_path = lambda: roo_cfg
+            installer.get_zed_config_path = lambda: zed_cfg
+            try:
+                dummy_instr = Path("/dummy/instructions.md")
+                installer.install_claude_desktop(dummy_instr)
+                installer.install_roo_code(dummy_instr)
+                installer.install_zed(dummy_instr)
+
+                self.assertEqual(
+                    installer.read_json_file(claude_cfg)["mcpServers"]["db"],
+                    {"command": "db-grep", "args": ["--server"]},
+                )
+                self.assertEqual(
+                    installer.read_json_file(roo_cfg)["mcpServers"]["db"],
+                    {"command": "db-grep", "args": ["--server"], "disabled": False, "autoApprove": []},
+                )
+                self.assertEqual(
+                    installer.read_json_file(zed_cfg)["context_servers"]["db"],
+                    {"command": {"path": "db-grep", "args": ["--server"]}},
+                )
+            finally:
+                installer.get_claude_desktop_config_path = orig_claude
+                installer.get_roo_code_config_path = orig_roo
+                installer.get_zed_config_path = orig_zed
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed unreachable duplicate `try/except/finally` block in `server.ping_database()` and deduplicated temporary config setup in `tests/test_server_logic.py` for cross-platform file locking compatibility.
 
 ### Changed
+- Consolidated cross-platform config path helpers (`_appdata_config_path`, `_home_config_path`), harness detection (`_detect_path_or_bin`), and JSON MCP registration (`_install_json_mcp`) in `installer.py`.
 - Unified database key resolution (`resolve_db_keys`) in `server.py` and reused `server.execute_connection_check()` inside `cli.run_check_connection_cli()`.
 - Deduplicated section parsing loop, entry lookup (`_load_target_entry`), and duplicate not-found error messages in `config_manager.py`.
 - Centralized package version resolution in `cli.py` by reusing `updater.get_current_version()`.

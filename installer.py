@@ -105,60 +105,63 @@ def write_json_file(path: Path, data: dict):
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def get_claude_desktop_config_path() -> Path:
+def _appdata_config_path(rel_path: str, mac_support: bool = True, linux_rel: str | None = None) -> Path:
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
-        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
-        return base / "Claude" / "claude_desktop_config.json"
-    elif sys.platform == "darwin":
-        return Path("~/Library/Application Support/Claude/claude_desktop_config.json").expanduser()
-    else:
-        return Path("~/.config/Claude/claude_desktop_config.json").expanduser()
+        base = Path(appdata) if appdata else Path("~/AppData/Roaming").expanduser()
+        return base / rel_path
+    if sys.platform == "darwin" and mac_support:
+        return Path(f"~/Library/Application Support/{rel_path}").expanduser()
+    return Path(f"~/.config/{linux_rel or rel_path}").expanduser()
+
+
+def _home_config_path(rel_path: str) -> Path:
+    if sys.platform == "win32":
+        userprofile = os.environ.get("USERPROFILE")
+        base = Path(userprofile) if userprofile else Path("~").expanduser()
+        return base / rel_path
+    return Path(f"~/{rel_path}").expanduser()
+
+
+def get_claude_desktop_config_path() -> Path:
+    return _appdata_config_path("Claude/claude_desktop_config.json")
 
 
 def get_cursor_config_path() -> Path:
-    if sys.platform == "win32":
-        userprofile = os.environ.get("USERPROFILE")
-        base = Path(userprofile) if userprofile else Path("~").expanduser()
-        return base / ".cursor" / "mcp.json"
-    else:
-        return Path("~/.cursor/mcp.json").expanduser()
+    return _home_config_path(".cursor/mcp.json")
 
 
 def get_codex_config_path() -> Path:
-    if sys.platform == "win32":
-        userprofile = os.environ.get("USERPROFILE")
-        base = Path(userprofile) if userprofile else Path("~").expanduser()
-        return base / ".codex" / "config.toml"
-    else:
-        return Path("~/.codex/config.toml").expanduser()
+    return _home_config_path(".codex/config.toml")
 
 
 def get_roo_code_config_path() -> Path:
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
-        return base / "Code" / "User" / "globalStorage" / "rooveterinaryinc.roo-cline" / "settings" / "cline_mcp_settings.json"
-    elif sys.platform == "darwin":
-        return Path("~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json").expanduser()
-    else:
-        return Path("~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json").expanduser()
+    return _appdata_config_path("Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json")
 
 
 def get_zed_config_path() -> Path:
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) if appdata else Path("~").expanduser() / "AppData" / "Roaming"
-        return base / "Zed" / "settings.json"
-    else:
-        return Path("~/.config/zed/settings.json").expanduser()
+    return _appdata_config_path("Zed/settings.json", mac_support=False, linux_rel="zed/settings.json")
 
 
 def get_pi_agent_dir() -> Path:
     env_dir = os.environ.get("PI_CODING_AGENT_DIR")
-    if env_dir:
-        return Path(env_dir).expanduser()
-    return Path("~/.pi/agent").expanduser()
+    return Path(env_dir).expanduser() if env_dir else Path("~/.pi/agent").expanduser()
+
+
+STD_MCP_ENTRY = {"command": "db-grep", "args": ["--server"]}
+
+
+def _detect_path_or_bin(cfg: Path, binary: str | None = None, check_parent: bool = True) -> bool:
+    return cfg.exists() or (check_parent and cfg.parent.exists()) or bool(binary and shutil.which(binary))
+
+
+def _install_json_mcp(cfg_file: Path, label: str, section_key: str = "mcpServers", entry: dict | None = None):
+    data = read_json_file(cfg_file)
+    servers = data.get(section_key, {})
+    servers["db"] = dict(entry or STD_MCP_ENTRY)
+    data[section_key] = servers
+    write_json_file(cfg_file, data)
+    print(f"  ✓ Configured {label}: {cfg_file}")
 
 
 # ---------------- 9 Harness Implementations in Ordered Sequence ----------------
@@ -185,27 +188,16 @@ def install_claude_cli(_instructions_file: Path):
 
 # 2. Claude Desktop
 def detect_claude_desktop() -> bool:
-    cfg = get_claude_desktop_config_path()
-    return cfg.exists() or cfg.parent.exists()
+    return _detect_path_or_bin(get_claude_desktop_config_path())
 
 
 def install_claude_desktop(_instructions_file: Path):
-    cfg_file = get_claude_desktop_config_path()
-    data = read_json_file(cfg_file)
-    mcp = data.get("mcpServers", {})
-    mcp["db"] = {
-        "command": "db-grep",
-        "args": ["--server"],
-    }
-    data["mcpServers"] = mcp
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Claude Desktop: {cfg_file}")
+    _install_json_mcp(get_claude_desktop_config_path(), "Claude Desktop")
 
 
 # 3. OpenCode
 def detect_opencode() -> bool:
-    opencode_dir = Path("~/.config/opencode").expanduser()
-    return opencode_dir.exists() or bool(shutil.which("opencode"))
+    return _detect_path_or_bin(Path("~/.config/opencode").expanduser(), "opencode", check_parent=False)
 
 
 def install_opencode(instructions_file: Path):
@@ -238,45 +230,25 @@ def install_opencode(instructions_file: Path):
 # 4. Antigravity
 def detect_antigravity() -> bool:
     agy_cfg = Path("~/.gemini/config/mcp_config.json").expanduser()
-    return agy_cfg.parent.exists() or Path("~/.gemini").expanduser().exists() or bool(shutil.which("antigravity"))
+    return _detect_path_or_bin(agy_cfg, "antigravity") or Path("~/.gemini").expanduser().exists()
 
 
 def install_antigravity(_instructions_file: Path):
-    cfg_file = Path("~/.gemini/config/mcp_config.json").expanduser()
-    data = read_json_file(cfg_file)
-    mcp = data.get("mcpServers", {})
-    mcp["db"] = {
-        "command": "db-grep",
-        "args": ["--server"],
-    }
-    data["mcpServers"] = mcp
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Antigravity: {cfg_file}")
+    _install_json_mcp(Path("~/.gemini/config/mcp_config.json").expanduser(), "Antigravity")
 
 
 # 5. Cursor
 def detect_cursor() -> bool:
-    cfg = get_cursor_config_path()
-    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("cursor"))
+    return _detect_path_or_bin(get_cursor_config_path(), "cursor")
 
 
 def install_cursor(_instructions_file: Path):
-    cfg_file = get_cursor_config_path()
-    data = read_json_file(cfg_file)
-    mcp = data.get("mcpServers", {})
-    mcp["db"] = {
-        "command": "db-grep",
-        "args": ["--server"],
-    }
-    data["mcpServers"] = mcp
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Cursor: {cfg_file}")
+    _install_json_mcp(get_cursor_config_path(), "Cursor")
 
 
 # 6. Codex CLI
 def detect_codex() -> bool:
-    cfg = get_codex_config_path()
-    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("codex"))
+    return _detect_path_or_bin(get_codex_config_path(), "codex")
 
 
 def install_codex(_instructions_file: Path):
@@ -297,63 +269,38 @@ def install_codex(_instructions_file: Path):
 
 # 7. Roo Code
 def detect_roo_code() -> bool:
-    cfg = get_roo_code_config_path()
-    return cfg.exists() or cfg.parent.exists()
+    return _detect_path_or_bin(get_roo_code_config_path())
 
 
 def install_roo_code(_instructions_file: Path):
-    cfg_file = get_roo_code_config_path()
-    data = read_json_file(cfg_file)
-    mcp = data.get("mcpServers", {})
-    mcp["db"] = {
-        "command": "db-grep",
-        "args": ["--server"],
-        "disabled": False,
-        "autoApprove": [],
-    }
-    data["mcpServers"] = mcp
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Roo Code: {cfg_file}")
+    _install_json_mcp(
+        get_roo_code_config_path(),
+        "Roo Code",
+        entry={**STD_MCP_ENTRY, "disabled": False, "autoApprove": []},
+    )
 
 
 # 8. Zed Editor
 def detect_zed() -> bool:
-    cfg = get_zed_config_path()
-    return cfg.exists() or cfg.parent.exists() or bool(shutil.which("zed"))
+    return _detect_path_or_bin(get_zed_config_path(), "zed")
 
 
 def install_zed(_instructions_file: Path):
-    cfg_file = get_zed_config_path()
-    data = read_json_file(cfg_file)
-    context_servers = data.get("context_servers", {})
-    context_servers["db"] = {
-        "command": {
-            "path": "db-grep",
-            "args": ["--server"],
-        }
-    }
-    data["context_servers"] = context_servers
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Zed Editor: {cfg_file}")
+    _install_json_mcp(
+        get_zed_config_path(),
+        "Zed Editor",
+        section_key="context_servers",
+        entry={"command": {"path": "db-grep", "args": ["--server"]}},
+    )
 
 
 # 9. Pi
 def detect_pi() -> bool:
-    agent_dir = get_pi_agent_dir()
-    return agent_dir.exists() or bool(shutil.which("pi"))
+    return _detect_path_or_bin(get_pi_agent_dir(), "pi", check_parent=False)
 
 
 def install_pi(_instructions_file: Path):
-    cfg_file = get_pi_agent_dir() / "mcp.json"
-    data = read_json_file(cfg_file)
-    mcp = data.get("mcpServers", {})
-    mcp["db"] = {
-        "command": "db-grep",
-        "args": ["--server"],
-    }
-    data["mcpServers"] = mcp
-    write_json_file(cfg_file, data)
-    print(f"  ✓ Configured Pi: {cfg_file}")
+    _install_json_mcp(get_pi_agent_dir() / "mcp.json", "Pi")
 
 
 # ---------------- Registry Definition in Exact Requested Order ----------------
