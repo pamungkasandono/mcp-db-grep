@@ -46,6 +46,9 @@ def _read(kind: str, arg: str) -> str:
     return p.read_text(encoding="utf-8").rstrip("\r\n")
 
 
+URI_SCHEMES = ("postgres://", "postgresql://", "mysql://")
+
+
 def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None = None) -> str:
     if not isinstance(value, str):
         return value
@@ -66,32 +69,86 @@ def resolve(value: str, shorthand: bool = False, secrets_pool: set[str] | None =
                 secrets_pool.add(val)
             return val
 
+    escaped = value.replace("$$", "\0")
+    is_uri = escaped.strip().lower().startswith(URI_SCHEMES)
+
     def sub(m):
         v = _read(m[1], m[2].strip())
+        # Auto-encode if explicitly '|urlenc' OR if token sits inside URI userinfo (before '@')
+        in_uri_userinfo = is_uri and ("@" in escaped[m.end():].split("?", 1)[0])
+        should_encode = bool(m[3]) or in_uri_userinfo
+        encoded = quote(v, safe="") if should_encode else v
         if secrets_pool is not None and v:
             secrets_pool.add(v)
-        return quote(v, safe="") if m[3] else v
+            if should_encode:
+                secrets_pool.add(encoded)
+        return encoded
 
-    out = REF.sub(sub, value.replace("$$", "\0"))
+    out = REF.sub(sub, escaped)
     if "${" in out:
         raise ValueError(f"Invalid or unclosed interpolation syntax in: '{value}'")
     return out.replace("\0", "$")
 
 
-DSN_PW_PATTERNS = (
-    re.compile(r"://[^/@:]+:([^/@]+)@"),
-    re.compile(r"^[^/@:]+/([^/@]+)@"),
-)
+def normalize_dsn_credentials(dsn: str, secrets_pool: set[str] | None = None) -> str:
+    if not dsn or not isinstance(dsn, str):
+        return dsn
+    s = dsn.strip()
+    if not s.lower().startswith(URI_SCHEMES):
+        return dsn
+
+    scheme, rest = s.split("://", 1)
+    if "@" not in rest:
+        return dsn
+
+    # Separate optional query string before locating the rightmost '@' of userinfo
+    if "?" in rest and "@" in rest.split("?", 1)[1]:
+        before_q, query = rest.split("?", 1)
+        if "@" not in before_q:
+            return dsn
+        userinfo, host_path = before_q.rsplit("@", 1)
+        host_and_rest = f"{host_path}?{query}"
+    else:
+        userinfo, host_and_rest = rest.rsplit("@", 1)
+
+    if not host_and_rest or host_and_rest.startswith("/"):
+        return dsn
+
+    if ":" in userinfo:
+        raw_user, raw_pw = userinfo.split(":", 1)
+        dec_user, dec_pw = unquote(raw_user), unquote(raw_pw)
+        enc_user, enc_pw = quote(dec_user, safe=""), quote(dec_pw, safe="")
+        if secrets_pool is not None and dec_pw:
+            secrets_pool.add(dec_pw)
+            secrets_pool.add(enc_pw)
+        return f"{scheme}://{enc_user}:{enc_pw}@{host_and_rest}"
+
+    dec_user = unquote(userinfo)
+    return f"{scheme}://{quote(dec_user, safe='')}@{host_and_rest}"
 
 
 def _extract_dsn_passwords(dsn: str, ignore_refs: bool = False) -> list[str]:
     if not dsn or not isinstance(dsn, str):
         return []
-    target = REF.sub("__REF__", dsn) if ignore_refs else dsn
-    passwords = [m.group(1) for pat in DSN_PW_PATTERNS if (m := pat.search(target))]
+    target = REF.sub("__REF__", dsn.strip()) if ignore_refs else dsn.strip()
+    passwords = []
+    if target.lower().startswith(URI_SCHEMES):
+        rest = target.split("://", 1)[1].split("?", 1)[0]
+        if "@" in rest:
+            userinfo = rest.rsplit("@", 1)[0]
+            if ":" in userinfo:
+                pw = userinfo.split(":", 1)[1]
+                passwords.append(pw)
+                if not ignore_refs and unquote(pw) != pw:
+                    passwords.append(unquote(pw))
+    elif "@" in target and "://" not in target:
+        userinfo = target.rsplit("@", 1)[0]
+        if "/" in userinfo:
+            passwords.append(userinfo.split("/", 1)[1])
+
     if ignore_refs:
-        return [p for p in passwords if "__REF__" not in p]
-    return passwords
+        return [p for p in passwords if p and "__REF__" not in p]
+    return [p for p in passwords if p]
 
 
 def _detect_source_kind(raw_val: str) -> str | None:
@@ -223,6 +280,7 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
         resolved_dsn = ""
         if raw_dsn:
             resolved_dsn = resolve(str(raw_dsn), shorthand=True, secrets_pool=test_pool)
+            resolved_dsn = normalize_dsn_credentials(resolved_dsn, secrets_pool=test_pool)
             validate_dsn_syntax(driver_type, resolved_dsn)
 
         if driver_type == "oracle" and not cfg.get("user") and ("/" not in resolved_dsn):
@@ -368,6 +426,7 @@ class DB:
 
     def get_dsn(self) -> str:
         dsn = resolve(self.cfg.get("dsn", ""), shorthand=True, secrets_pool=self.secrets)
+        dsn = normalize_dsn_credentials(dsn, secrets_pool=self.secrets)
         validate_dsn_syntax(self.cfg.get("type", "postgres"), dsn)
         self.secrets.update(_extract_dsn_passwords(dsn))
         return dsn

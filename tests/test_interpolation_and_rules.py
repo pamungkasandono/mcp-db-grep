@@ -12,9 +12,32 @@ import server
 
 class TestInterpolationAndRules(unittest.TestCase):
     def test_interpolation_env_and_urlenc(self):
-        with patch.dict(os.environ, {"SECRET_PW": "p@ss/word!#1"}):
+        with patch.dict(os.environ, {"SECRET_PW": "p@ss/word!#1", "DB_HOST": "db.internal"}):
+            # Explicit |urlenc still works
             resolved = server.resolve("postgres://user:${env:SECRET_PW|urlenc}@localhost/db")
             self.assertEqual(resolved, "postgres://user:p%40ss%2Fword%21%231@localhost/db")
+
+            # Without |urlenc: automatically URL-encoded when inside URI userinfo!
+            resolved_auto = server.resolve("postgres://user:${env:SECRET_PW}@${env:DB_HOST}:5432/db")
+            self.assertEqual(resolved_auto, "postgres://user:p%40ss%2Fword%21%231@db.internal:5432/db")
+
+            resolved_mysql_auto = server.resolve("mysql://ro_user:${env:SECRET_PW}@${env:DB_HOST}:3306/orders_db")
+            self.assertEqual(resolved_mysql_auto, "mysql://ro_user:p%40ss%2Fword%21%231@db.internal:3306/orders_db")
+
+    def test_auto_normalize_full_dsn_with_special_chars_in_password(self):
+        # Full DSN in env containing raw '@', ':', '/', '#' inside the password
+        raw_full = "mysql://ro_user:p@ss:w/rd#1@db.internal:3306/orders_db"
+        with patch.dict(os.environ, {"ORDERS_FULL_DSN": raw_full}):
+            cfg = {"type": "mysql", "dsn": "env:ORDERS_FULL_DSN"}
+            db = server.MySQL("mysql:orders", cfg)
+            dsn = db.get_dsn()
+            self.assertEqual(dsn, "mysql://ro_user:p%40ss%3Aw%2Frd%231@db.internal:3306/orders_db")
+            self.assertEqual(db.default_schema, "orders_db")
+            # Both raw and URL-encoded password forms must be redacted
+            self.assertIn("p@ss:w/rd#1", db.secrets)
+            self.assertIn("p%40ss%3Aw%2Frd%231", db.secrets)
+            self.assertNotIn("p@ss:w/rd#1", db.redact("Failed login for p@ss:w/rd#1"))
+            self.assertNotIn("p%40ss%3Aw%2Frd%231", db.redact("URI mysql://ro_user:p%40ss%3Aw%2Frd%231@db.internal"))
 
     def test_interpolation_shorthand_env_and_raw(self):
         with patch.dict(os.environ, {"SECRET_PW": "supersecret"}):

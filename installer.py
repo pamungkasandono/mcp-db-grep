@@ -70,10 +70,10 @@ timeout_ms = 10000
 # user = "ro_user"
 # password = "env:INVENTORY_PW"
 
-# ── Postgres Example 3: Inline password in DSN from env/file (use |urlenc)
+# ── Postgres Example 3: Inline password in DSN from env/file (special chars are auto URL-encoded)
 # [db.postgres.analytics-app]
 # description = "Analytics Database"
-# dsn = "postgres://ro_user:${env:ANALYTICS_PW|urlenc}@localhost:5432/analytics"
+# dsn = "postgres://ro_user:${env:ANALYTICS_PW}@localhost:5432/analytics"
 
 # ── Oracle Example: Connect string + secret from file (or inline: ro_user/${env:PAYROLL_PW}@localhost:1521/PROD)
 # [db.oracle.payroll-prod]
@@ -87,7 +87,7 @@ timeout_ms = 10000
 # ── MySQL Example: URI DSN + credentials from environment
 # [db.mysql.orders-app]
 # description = "Orders MySQL Database"
-# dsn = "mysql://ro_user:${env:ORDERS_PW|urlenc}@localhost:3306/orders_db"
+# dsn = "mysql://ro_user:${env:ORDERS_PW}@localhost:3306/orders_db"
 # auto_tables = ["mst_*", "ref_*"]
 """
 
