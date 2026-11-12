@@ -15,7 +15,7 @@ install:
 
 # Syntax check
 check:
-    .venv/bin/python -m py_compile cli.py server.py monitor.py installer.py updater.py
+    .venv/bin/python -m py_compile cli.py server.py monitor.py installer.py updater.py config_manager.py
 
 # Run test suite
 test:

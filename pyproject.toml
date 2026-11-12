@@ -23,7 +23,7 @@ dependencies = [
 db-grep = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "server", "monitor", "installer", "updater"]
+py-modules = ["cli", "server", "monitor", "installer", "updater", "config_manager"]
 
 [tool.setuptools.package-data]
 "*" = ["instructions/*.md"]

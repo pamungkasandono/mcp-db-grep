@@ -93,6 +93,25 @@ dsn = "ro_user/${env:EMLOAN_PW}@localhost:1521/EMLOAN"
 
 ---
 
+## Configuration Manager (`db-grep --config`)
+
+Manage databases without memorizing file paths or manual TOML editing:
+
+```bash
+# Interactive dashboard (view status, toggle enable/disable, add, delete, edit):
+db-grep --config
+
+# Direct CLI commands:
+db-grep --config list
+db-grep --config disable inventory-core "weekly migration"
+db-grep --config enable inventory-core
+db-grep --config delete old-service
+db-grep --config add
+db-grep --config edit
+```
+
+---
+
 ## Diagnostics & Health Checks
 
 ### Check Configuration (`config.toml`)

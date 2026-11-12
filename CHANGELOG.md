@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
 
 ### Added
+- `--config` interactive controller and CLI subcommands (`list`, `add`, `disable`, `enable`, `delete`, `edit`) to manage databases without manual file edits.
+- Comment-based non-destructive disable/enable preserving credentials with optional audit reason tags (`# [DISABLED: reason] [db.<driver>.<name>]`).
 - Universal secret interpolation `${env:VAR}`, `${file:/path}`, `${env:VAR|urlenc}`, and shorthand `env:VAR` / `file:/path`.
 - Enforced `chmod 600` on POSIX when config contains raw secrets or `file:` references.
 - `[defaults]` section supporting inheritance for `auto_metadata`, `max_rows`, and `timeout_ms`.
