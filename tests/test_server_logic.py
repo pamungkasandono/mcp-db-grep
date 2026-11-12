@@ -1,14 +1,27 @@
 import asyncio
+from contextlib import contextmanager
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import server
 
 
 class TestServerLogic(unittest.TestCase):
+    @contextmanager
+    def temp_config(self, sample_toml: bytes):
+        with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as tmp:
+            tmp.write(sample_toml)
+            tmp_path = Path(tmp.name)
+        try:
+            with patch.object(server, "CONFIG", tmp_path):
+                yield tmp_path
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
     def test_check_konteks_valid(self):
         valid = "my-project · fetch active users"
         self.assertEqual(server.check_konteks(valid), valid)
@@ -30,14 +43,10 @@ port = 48260
 [db.unknown_driver.test-db]
 dsn = "test://localhost/test"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
-
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                with self.assertRaises(ValueError) as ctx:
-                    server.databases()
-                self.assertIn("Unknown driver '[db.unknown_driver]'", str(ctx.exception))
+        with self.temp_config(sample_toml):
+            with self.assertRaises(ValueError) as ctx:
+                server.databases()
+            self.assertIn("Unknown driver '[db.unknown_driver]'", str(ctx.exception))
 
     def test_same_db_name_across_different_types_composite_keys(self):
         sample_toml = b"""[monitor]
@@ -56,45 +65,41 @@ description = "Oracle DB"
 [db.postgres.ecommerce-dev]
 dsn = "postgres://user@localhost:5432/ecom"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
+        with self.temp_config(sample_toml):
+            dbs = server.databases()
+            self.assertIn("postgres:inventory-core", dbs)
+            self.assertIn("oracle:inventory-core", dbs)
+            self.assertIn("postgres:ecommerce-dev", dbs)
 
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                dbs = server.databases()
-                self.assertIn("postgres:inventory-core", dbs)
-                self.assertIn("oracle:inventory-core", dbs)
-                self.assertIn("postgres:ecommerce-dev", dbs)
+            # 1. Unambiguous unique name resolves directly
+            resolved_ecom = server.resolve_db_key("ecommerce-dev", dbs)
+            self.assertEqual(resolved_ecom, "postgres:ecommerce-dev")
 
-                # 1. Unambiguous unique name resolves directly
-                resolved_ecom = server.resolve_db_key("ecommerce-dev", dbs)
-                self.assertEqual(resolved_ecom, "postgres:ecommerce-dev")
+            # 2. Resolving collided short name without prefix raises helpful ValueError
+            with self.assertRaises(ValueError) as ctx:
+                server.resolve_db_key("inventory-core", dbs)
+            self.assertIn("ambiguous across multiple types", str(ctx.exception))
+            self.assertIn("postgres:inventory-core", str(ctx.exception))
+            self.assertIn("oracle:inventory-core", str(ctx.exception))
 
-                # 2. Resolving collided short name without prefix raises helpful ValueError
-                with self.assertRaises(ValueError) as ctx:
-                    server.resolve_db_key("inventory-core", dbs)
-                self.assertIn("ambiguous across multiple types", str(ctx.exception))
-                self.assertIn("postgres:inventory-core", str(ctx.exception))
-                self.assertIn("oracle:inventory-core", str(ctx.exception))
+            # 3. Explicit prefix resolves accurately
+            resolved_pg = server.resolve_db_key("postgres:inventory-core", dbs)
+            self.assertEqual(resolved_pg, "postgres:inventory-core")
 
-                # 3. Explicit prefix resolves accurately
-                resolved_pg = server.resolve_db_key("postgres:inventory-core", dbs)
-                self.assertEqual(resolved_pg, "postgres:inventory-core")
+            resolved_ora = server.resolve_db_key("oracle:inventory-core", dbs)
+            self.assertEqual(resolved_ora, "oracle:inventory-core")
 
-                resolved_ora = server.resolve_db_key("oracle:inventory-core", dbs)
-                self.assertEqual(resolved_ora, "oracle:inventory-core")
+            # 4. pgsql: alias is NOT supported — user must write postgres:
+            with self.assertRaises(ValueError):
+                server.resolve_db_key("pgsql:inventory-core", dbs)
 
-                # 4. pgsql: alias is NOT supported — user must write postgres:
-                with self.assertRaises(ValueError):
-                    server.resolve_db_key("pgsql:inventory-core", dbs)
-
-                # 5. list_databases tool surfaces full qualified name on collision
-                out_str = asyncio.run(server.list_databases())
-                out = json.loads(out_str)
-                db_names = [item["db"] for item in out]
-                self.assertIn("postgres:inventory-core", db_names)
-                self.assertIn("oracle:inventory-core", db_names)
-                self.assertIn("ecommerce-dev", db_names)
+            # 5. list_databases tool surfaces full qualified name on collision
+            out_str = asyncio.run(server.list_databases())
+            out = json.loads(out_str)
+            db_names = [item["db"] for item in out]
+            self.assertIn("postgres:inventory-core", db_names)
+            self.assertIn("oracle:inventory-core", db_names)
+            self.assertIn("ecommerce-dev", db_names)
 
     def test_single_prefixed_db_resolves_with_or_without_prefix(self):
         sample_toml = b"""[monitor]
@@ -103,16 +108,12 @@ port = 48260
 [db.postgres.unique-name]
 dsn = "postgres://user@localhost:5432/unique"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
-
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                dbs = server.databases()
-                # Should resolve with exact key
-                self.assertEqual(server.resolve_db_key("postgres:unique-name", dbs), "postgres:unique-name")
-                # And also resolve without prefix because no collision exists!
-                self.assertEqual(server.resolve_db_key("unique-name", dbs), "postgres:unique-name")
+        with self.temp_config(sample_toml):
+            dbs = server.databases()
+            # Should resolve with exact key
+            self.assertEqual(server.resolve_db_key("postgres:unique-name", dbs), "postgres:unique-name")
+            # And also resolve without prefix because no collision exists!
+            self.assertEqual(server.resolve_db_key("unique-name", dbs), "postgres:unique-name")
 
     def test_non_existent_db_error_message(self):
         sample_toml = b"""[monitor]
@@ -121,16 +122,12 @@ port = 48260
 [db.postgres.alpha]
 dsn = "postgres://user@localhost:5432/alpha"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
-
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                dbs = server.databases()
-                with self.assertRaises(ValueError) as ctx:
-                    server.resolve_db_key("non-existent-db", dbs)
-                self.assertIn("db 'non-existent-db' does not exist", str(ctx.exception))
-                self.assertIn("Available choices:", str(ctx.exception))
+        with self.temp_config(sample_toml):
+            dbs = server.databases()
+            with self.assertRaises(ValueError) as ctx:
+                server.resolve_db_key("non-existent-db", dbs)
+            self.assertIn("db 'non-existent-db' does not exist", str(ctx.exception))
+            self.assertIn("Available choices:", str(ctx.exception))
 
     def test_inspect_config_valid_and_missing_env(self):
         sample_toml = b"""[monitor]
@@ -145,23 +142,19 @@ dsn = "host/corp"
 user = "ro_user"
 password = "plain_password"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
+        with self.temp_config(sample_toml):
+            # UNSET_TEST_ENV_VAR_123 is missing from env
+            with patch.dict("os.environ", {}, clear=True):
+                report = server.inspect_config()
+                self.assertFalse(report["valid"])
+                db_names = [d["name"] for d in report["databases"]]
+                self.assertIn("app", db_names)
+                self.assertIn("corp", db_names)
 
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                # UNSET_TEST_ENV_VAR_123 is missing from env
-                with patch.dict("os.environ", {}, clear=True):
-                    report = server.inspect_config()
-                    self.assertFalse(report["valid"])
-                    db_names = [d["name"] for d in report["databases"]]
-                    self.assertIn("app", db_names)
-                    self.assertIn("corp", db_names)
-
-                    # Now provide the env var
-                    with patch.dict("os.environ", {"UNSET_TEST_ENV_VAR_123": "secret"}):
-                        report_ok = server.inspect_config()
-                        self.assertTrue(report_ok["valid"])
+                # Now provide the env var
+                with patch.dict("os.environ", {"UNSET_TEST_ENV_VAR_123": "secret"}):
+                    report_ok = server.inspect_config()
+                    self.assertTrue(report_ok["valid"])
 
     def test_check_config_mcp_tool(self):
         sample_toml = b"""[monitor]
@@ -171,15 +164,11 @@ port = 48260
 dsn = "postgres://user@localhost/crm"
 password = "123"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
-
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                out_str = asyncio.run(server.check_config())
-                data = json.loads(out_str)
-                self.assertTrue(data["valid"])
-                self.assertEqual(data["databases"][0]["name"], "crm")
+        with self.temp_config(sample_toml):
+            out_str = asyncio.run(server.check_config())
+            data = json.loads(out_str)
+            self.assertTrue(data["valid"])
+            self.assertEqual(data["databases"][0]["name"], "crm")
 
     def test_ping_database_postgres_mock(self):
         cfg = {
@@ -211,7 +200,9 @@ password = "123"
             def broken(self):
                 return False
 
-        with patch("psycopg.connect", return_value=MockConn()):
+        mock_psycopg = MagicMock()
+        mock_psycopg.connect.return_value = MockConn()
+        with patch.dict(sys.modules, {"psycopg": mock_psycopg}):
             res = server.ping_database("postgres:test", cfg)
             self.assertEqual(res["status"], "connected")
             self.assertEqual(res["query"], "SELECT 1;")
@@ -223,7 +214,9 @@ password = "123"
             "type": "postgres",
             "dsn": "postgres://invalid:5432/bad",
         }
-        with patch("psycopg.connect", side_effect=Exception("Connection refused")):
+        mock_psycopg = MagicMock()
+        mock_psycopg.connect.side_effect = Exception("Connection refused")
+        with patch.dict(sys.modules, {"psycopg": mock_psycopg}):
             res = server.ping_database("postgres:bad", cfg)
             self.assertEqual(res["status"], "failed")
             self.assertEqual(res["query"], "SELECT 1;")
@@ -236,17 +229,13 @@ port = 48260
 [db.postgres.prod]
 dsn = "postgres://localhost/prod"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
-
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                with patch.object(server, "ping_database", return_value={"db": "postgres:prod", "status": "connected", "query": "SELECT 1;", "latency_ms": 1.2, "error": None, "type": "postgres"}):
-                    out_str = asyncio.run(server.check_connection("all"))
-                    res = json.loads(out_str)
-                    self.assertEqual(len(res), 1)
-                    self.assertEqual(res[0]["status"], "connected")
-                    self.assertEqual(res[0]["query"], "SELECT 1;")
+        with self.temp_config(sample_toml):
+            with patch.object(server, "ping_database", return_value={"db": "postgres:prod", "status": "connected", "query": "SELECT 1;", "latency_ms": 1.2, "error": None, "type": "postgres"}):
+                out_str = asyncio.run(server.check_connection("all"))
+                res = json.loads(out_str)
+                self.assertEqual(len(res), 1)
+                self.assertEqual(res[0]["status"], "connected")
+                self.assertEqual(res[0]["query"], "SELECT 1;")
 
     def test_resolve_db_keys_for_check_both_run_on_duplicate(self):
         sample_toml = b"""[monitor]
@@ -262,27 +251,23 @@ user = "ro_user"
 [db.postgres.ecommerce-dev]
 dsn = "postgres://localhost/ecom"
 """
-        with tempfile.NamedTemporaryFile(suffix=".toml") as tmp:
-            tmp.write(sample_toml)
-            tmp.flush()
+        with self.temp_config(sample_toml):
+            dbs = server.databases()
 
-            with patch.object(server, "CONFIG", Path(tmp.name)):
-                dbs = server.databases()
+            # Short name matching two DBs -> returns BOTH (both run)
+            resolved = server.resolve_db_keys_for_check("inventory-core", dbs)
+            self.assertEqual(sorted(resolved), ["oracle:inventory-core", "postgres:inventory-core"])
 
-                # Short name matching two DBs -> returns BOTH (both run)
-                resolved = server.resolve_db_keys_for_check("inventory-core", dbs)
-                self.assertEqual(sorted(resolved), ["oracle:inventory-core", "postgres:inventory-core"])
+            # Explicit prefix -> returns only the specified one
+            resolved_pg = server.resolve_db_keys_for_check("postgres:inventory-core", dbs)
+            self.assertEqual(resolved_pg, ["postgres:inventory-core"])
 
-                # Explicit prefix -> returns only the specified one
-                resolved_pg = server.resolve_db_keys_for_check("postgres:inventory-core", dbs)
-                self.assertEqual(resolved_pg, ["postgres:inventory-core"])
+            resolved_ora = server.resolve_db_keys_for_check("oracle:inventory-core", dbs)
+            self.assertEqual(resolved_ora, ["oracle:inventory-core"])
 
-                resolved_ora = server.resolve_db_keys_for_check("oracle:inventory-core", dbs)
-                self.assertEqual(resolved_ora, ["oracle:inventory-core"])
-
-                # pgsql: prefix is NOT an alias, must raise
-                with self.assertRaises(ValueError):
-                    server.resolve_db_keys_for_check("pgsql:inventory-core", dbs)
+            # pgsql: prefix is NOT an alias, must raise
+            with self.assertRaises(ValueError):
+                server.resolve_db_keys_for_check("pgsql:inventory-core", dbs)
 
     def test_query_filter_rejects_non_select(self):
         sql_insert = "INSERT INTO users (name) VALUES ('alice')"

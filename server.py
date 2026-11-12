@@ -838,20 +838,6 @@ def ping_database(db_key: str, cfg: dict) -> dict:
             db_inst.close()
 
     return result
-    try:
-        db_inst = DRIVERS[driver_type](db_key, cfg)
-        db_inst.connect()
-        cols, rows = db_inst.run(ping_sql)
-        ms = round((time.monotonic() - t0) * 1000, 2)
-        result["status"] = "connected"
-        result["latency_ms"] = ms
-    except Exception as e:
-        result["error"] = str(e)
-    finally:
-        if db_inst:
-            db_inst.close()
-
-    return result
 
 
 def execute_connection_check(target: str = "all") -> list[dict]:
