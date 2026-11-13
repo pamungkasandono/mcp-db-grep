@@ -3,6 +3,7 @@ import sys
 import unittest
 
 from cli import parse_selection_tokens
+from updater import get_current_version
 
 
 class TestCli(unittest.TestCase):
@@ -15,10 +16,11 @@ class TestCli(unittest.TestCase):
         )
 
     def test_version_flag(self):
+        ver = get_current_version()
         res = self.run_cli(["--version"])
         self.assertEqual(res.returncode, 0)
         self.assertIn("db-grep", res.stdout)
-        self.assertIn("0.1.0", res.stdout)
+        self.assertIn(ver, res.stdout)
 
     def test_help_flag(self):
         res = self.run_cli(["--help"])
@@ -49,9 +51,10 @@ class TestCli(unittest.TestCase):
         self.assertIn("usage: db-grep", res_h.stdout)
 
     def test_bare_command_displays_help_and_version(self):
+        ver = get_current_version()
         res = self.run_cli([])
         self.assertEqual(res.returncode, 0)
-        self.assertIn("db-grep v0.1.0", res.stdout)
+        self.assertIn(f"db-grep v{ver}", res.stdout)
         self.assertIn("usage: db-grep", res.stdout)
 
     def test_parse_selection_tokens_single(self):

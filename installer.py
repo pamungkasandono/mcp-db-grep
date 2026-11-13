@@ -8,7 +8,7 @@ from pathlib import Path
 
 DEFAULT_INSTRUCTIONS = """# Database MCP (`db-grep`) Handling Rules
 
-## Case 1: When any tool from `db` server returns `MONITOR_OFFLINE`
+## Case 1: When any tool from `db-grep` server returns `MONITOR_OFFLINE`
 This happens when the terminal monitor (`db-grep --monitor`) is not running.
 
 1. **ANTI-BYPASS STRICT RULE (DO NOT VIOLATE)**:
@@ -33,7 +33,7 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 
 1. **Stop Tool Calls Immediately**:
    - Never retry the rejected query.
-   - Never call any other `db` tool for the current request.
+   - Never call any other `db-grep` tool for the current request.
    - Never attempt alternative direct database access.
 
 2. **Explain Naturally (Do NOT copy or echo raw error instructions)**:
@@ -170,6 +170,7 @@ def get_pi_config_path() -> Path:
     return get_pi_agent_dir() / "mcp.json"
 
 
+MCP_SERVER_NAME = "db-grep"
 STD_MCP_ENTRY = {"command": "db-grep", "args": ["--server"]}
 
 
@@ -177,10 +178,23 @@ def _detect_path_or_bin(cfg: Path, binary: str | None = None, check_parent: bool
     return cfg.exists() or (check_parent and cfg.parent.exists()) or bool(binary and shutil.which(binary))
 
 
+def _is_legacy_db_grep_entry(val: object) -> bool:
+    if not isinstance(val, dict):
+        return False
+    cmd = val.get("command")
+    if cmd == "db-grep" or cmd == ["db-grep", "--server"]:
+        return True
+    if isinstance(cmd, dict) and cmd.get("path") == "db-grep":
+        return True
+    return False
+
+
 def _install_json_mcp(cfg_file: Path, label: str, section_key: str = "mcpServers", entry: dict | None = None):
     data = read_json_file(cfg_file)
     servers = data.get(section_key, {})
-    servers["db"] = dict(entry or STD_MCP_ENTRY)
+    if _is_legacy_db_grep_entry(servers.get("db")):
+        servers.pop("db", None)
+    servers[MCP_SERVER_NAME] = dict(entry or STD_MCP_ENTRY)
     data[section_key] = servers
     write_json_file(cfg_file, data)
     print(f"  ✓ Configured {label}: {cfg_file}")
@@ -199,9 +213,14 @@ def install_claude_cli(_instructions_file: Path):
         return
     try:
         subprocess.run(["claude", "mcp", "remove", "db"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        res = subprocess.run(["claude", "mcp", "add", "db", "--", "db-grep", "--server"], capture_output=True, text=True)
+        subprocess.run(["claude", "mcp", "remove", MCP_SERVER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        res = subprocess.run(
+            ["claude", "mcp", "add", MCP_SERVER_NAME, "--", "db-grep", "--server"],
+            capture_output=True,
+            text=True,
+        )
         if res.returncode == 0:
-            print("  ✓ Registered MCP 'db' to Claude Code CLI")
+            print(f"  ✓ Registered MCP '{MCP_SERVER_NAME}' to Claude Code CLI")
         else:
             print(f"  ✗ Claude CLI registration returned error: {res.stderr.strip()}")
     except Exception as e:
@@ -235,7 +254,9 @@ def install_opencode(instructions_file: Path):
         data["instructions"] = instructions
 
     mcp = data.get("mcp", {})
-    mcp["db"] = {
+    if _is_legacy_db_grep_entry(mcp.get("db")):
+        mcp.pop("db", None)
+    mcp[MCP_SERVER_NAME] = {
         "type": "local",
         "command": ["db-grep", "--server"],
         "enabled": True,
@@ -274,12 +295,20 @@ def install_codex(_instructions_file: Path):
     cfg_file.parent.mkdir(parents=True, exist_ok=True)
     content = cfg_file.read_text(encoding="utf-8") if cfg_file.exists() else ""
 
-    entry = '\n[mcp_servers.db]\ncommand = "db-grep"\nargs = ["--server"]\n'
-    if "[mcp_servers.db]" in content:
+    if "[mcp_servers.db-grep]" in content:
         # Already configured
         print(f"  ✓ Codex already configured: {cfg_file}")
         return
 
+    # Migrate legacy [mcp_servers.db] belonging to db-grep
+    legacy_re = re.compile(r'\[mcp_servers\.db\]\s*\n\s*command\s*=\s*"db-grep"')
+    if legacy_re.search(content):
+        updated = legacy_re.sub('[mcp_servers.db-grep]\ncommand = "db-grep"', content, count=1)
+        cfg_file.write_text(updated, encoding="utf-8")
+        print(f"  ✓ Migrated Codex MCP entry to 'db-grep': {cfg_file}")
+        return
+
+    entry = '\n[mcp_servers.db-grep]\ncommand = "db-grep"\nargs = ["--server"]\n'
     updated = (content.rstrip() + "\n" + entry).lstrip()
     cfg_file.write_text(updated, encoding="utf-8")
     print(f"  ✓ Configured Codex: {cfg_file}")

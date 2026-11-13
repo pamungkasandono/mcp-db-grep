@@ -204,8 +204,8 @@ To cleanly remove `db-grep` from your system:
    ```
 
 3. **Unregister MCP from clients (if applicable):**
-   - Claude Code CLI: `claude mcp remove db`
-   - Other clients: Remove the `"db"` block from their config file (`mcp.json`, `mcp_config.json`, etc.)
+   - Claude Code CLI: `claude mcp remove db-grep`
+   - Other clients: Remove the `"db-grep"` block from their config file (`mcp.json`, `mcp_config.json`, `opencode.jsonc`, etc.)
 
 ---
 

@@ -1,6 +1,6 @@
 # Database MCP (`db-grep`) Handling Rules
 
-## Case 1: When any tool from `db` server returns `MONITOR_OFFLINE`
+## Case 1: When any tool from `db-grep` server returns `MONITOR_OFFLINE`
 This happens when the terminal monitor (`db-grep --monitor`) is not running.
 
 1. **ANTI-BYPASS STRICT RULE (DO NOT VIOLATE)**:
@@ -25,7 +25,7 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 
 1. **Stop Tool Calls Immediately**:
    - Never retry the rejected query.
-   - Never call any other `db` tool for the current request.
+   - Never call any other `db-grep` tool for the current request.
    - Never attempt alternative direct database access.
 
 2. **Explain Naturally (Do NOT copy or echo raw error instructions)**:

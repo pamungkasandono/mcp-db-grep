@@ -62,7 +62,7 @@ class TestInstaller(unittest.TestCase):
                 installer.install_codex(Path("/dummy/instructions.md"))
                 content = codex_file.read_text(encoding="utf-8")
                 self.assertIn('model = "gpt-4o"', content)
-                self.assertIn("[mcp_servers.db]", content)
+                self.assertIn("[mcp_servers.db-grep]", content)
                 self.assertIn('command = "db-grep"', content)
                 self.assertIn('args = ["--server"]', content)
             finally:
@@ -74,35 +74,54 @@ class TestInstaller(unittest.TestCase):
             claude_cfg = tmp / "claude.json"
             roo_cfg = tmp / "roo.json"
             zed_cfg = tmp / "zed.json"
+            opencode_cfg = tmp / "opencode.jsonc"
+
+            # Seed legacy 'db' entry belonging to db-grep in claude_cfg,
+            # and an unrelated 'db' entry in roo_cfg to ensure it is preserved
+            installer.write_json_file(claude_cfg, {"mcpServers": {"db": {"command": "db-grep", "args": ["--server"]}}})
+            installer.write_json_file(roo_cfg, {"mcpServers": {"db": {"command": "other-db-mcp", "args": []}}})
 
             orig_claude = installer.get_claude_desktop_config_path
             orig_roo = installer.get_roo_code_config_path
             orig_zed = installer.get_zed_config_path
+            orig_opencode = installer.get_opencode_config_path
             installer.get_claude_desktop_config_path = lambda: claude_cfg
             installer.get_roo_code_config_path = lambda: roo_cfg
             installer.get_zed_config_path = lambda: zed_cfg
+            installer.get_opencode_config_path = lambda: opencode_cfg
             try:
                 dummy_instr = Path("/dummy/instructions.md")
                 installer.install_claude_desktop(dummy_instr)
                 installer.install_roo_code(dummy_instr)
                 installer.install_zed(dummy_instr)
+                installer.install_opencode(dummy_instr)
 
+                claude_servers = installer.read_json_file(claude_cfg)["mcpServers"]
+                self.assertNotIn("db", claude_servers)
+                self.assertEqual(claude_servers["db-grep"], {"command": "db-grep", "args": ["--server"]})
+
+                roo_servers = installer.read_json_file(roo_cfg)["mcpServers"]
+                self.assertIn("db", roo_servers)  # unrelated 'db' preserved
                 self.assertEqual(
-                    installer.read_json_file(claude_cfg)["mcpServers"]["db"],
-                    {"command": "db-grep", "args": ["--server"]},
-                )
-                self.assertEqual(
-                    installer.read_json_file(roo_cfg)["mcpServers"]["db"],
+                    roo_servers["db-grep"],
                     {"command": "db-grep", "args": ["--server"], "disabled": False, "autoApprove": []},
                 )
+
                 self.assertEqual(
-                    installer.read_json_file(zed_cfg)["context_servers"]["db"],
+                    installer.read_json_file(zed_cfg)["context_servers"]["db-grep"],
                     {"command": {"path": "db-grep", "args": ["--server"]}},
+                )
+
+                opencode_mcp = installer.read_json_file(opencode_cfg)["mcp"]
+                self.assertEqual(
+                    opencode_mcp["db-grep"],
+                    {"type": "local", "command": ["db-grep", "--server"], "enabled": True},
                 )
             finally:
                 installer.get_claude_desktop_config_path = orig_claude
                 installer.get_roo_code_config_path = orig_roo
                 installer.get_zed_config_path = orig_zed
+                installer.get_opencode_config_path = orig_opencode
 
     def test_harness_descriptions_and_menu_alignment_consistency(self):
         # 1. Verify all file-based harness descriptions are callable and return expanded absolute paths
