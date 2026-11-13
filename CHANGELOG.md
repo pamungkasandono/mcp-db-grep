@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `check_connection` / `--check-connection` now tests all matching databases across drivers when given an unprefixed short name, while driver prefixes (`postgres:`/`pgsql:`, `oracle:`/`ora:`, `mysql:`/`my:`) target a specific driver.
 
 ### Added
+- Single-letter shorthand flags (`-s`, `-m`, `-i`, `-c`, `-C`, `-t`, `-u`, `-U`, `-a`) across all CLI options in `cli.py` with expanded, crystal-clear help documentation (`-h` / `--help`).
 - Session-level auto-approve toggle (`[a]uto-approve session`) and on-demand lock hotkey (`[l]`) in `db-grep --monitor` with instant lock for 1 session, direct single-key picker for 2–4 sessions, and numbered multi-select menu for 5+ sessions.
 - MySQL driver support (`[db.mysql.<name>]`) via `pymysql` with read-only session enforcement, URI DSN validation (`mysql://...`), `sqlglot` MySQL dialect table extraction, and `--config add` interactive support.
 - `--config` interactive controller and CLI subcommands (`list`, `add`, `disable`, `enable`, `delete`, `edit`) to manage databases without manual file edits.

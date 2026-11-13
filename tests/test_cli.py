@@ -23,18 +23,30 @@ class TestCli(unittest.TestCase):
     def test_help_flag(self):
         res = self.run_cli(["--help"])
         self.assertEqual(res.returncode, 0)
-        self.assertIn("--server", res.stdout)
-        self.assertIn("--monitor", res.stdout)
-        self.assertIn("--init", res.stdout)
-        self.assertIn("--config", res.stdout)
-        self.assertIn("--check-config", res.stdout)
-        self.assertIn("--check-connection", res.stdout)
-        self.assertIn("--check-update", res.stdout)
-        self.assertIn("--upgrade", res.stdout)
+        self.assertIn("-s, --server", res.stdout)
+        self.assertIn("-m, --monitor", res.stdout)
+        self.assertIn("-i, --init", res.stdout)
+        self.assertIn("-c [CMD ...], --config [CMD ...]", res.stdout)
+        self.assertIn("-C, --check-config", res.stdout)
+        self.assertIn("-t [DB ...], --check-connection [DB ...]", res.stdout)
+        self.assertIn("-u, --check-update", res.stdout)
+        self.assertIn("-U, --upgrade", res.stdout)
+        self.assertIn("-a {claude", res.stdout)
         self.assertIn("--client", res.stdout)
         self.assertIn("claude", res.stdout)
         self.assertIn("antigravity", res.stdout)
         self.assertIn("pi", res.stdout)
+
+    def test_shorthand_flags_work(self):
+        # -v
+        res_v = self.run_cli(["-v"])
+        self.assertEqual(res_v.returncode, 0)
+        self.assertIn("db-grep", res_v.stdout)
+
+        # -h
+        res_h = self.run_cli(["-h"])
+        self.assertEqual(res_h.returncode, 0)
+        self.assertIn("usage: db-grep", res_h.stdout)
 
     def test_bare_command_displays_help_and_version(self):
         res = self.run_cli([])

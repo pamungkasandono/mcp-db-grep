@@ -157,52 +157,62 @@ def main():
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
+        help="Show program's version number and exit",
     )
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument(
+        "-s",
         "--server",
         action="store_true",
-        help="Run MCP stdio server for AI clients (Claude/opencode)",
+        help="Run MCP stdio server for AI clients (Claude, Cursor, Antigravity, OpenCode, etc.)",
     )
     group.add_argument(
+        "-m",
         "--monitor",
         action="store_true",
-        help="Run approval monitor interactive CLI",
+        help="Run interactive terminal monitor to inspect, approve [y], auto-approve [a], or reject [n] queries",
     )
     group.add_argument(
+        "-i",
         "--init",
         action="store_true",
-        help="Initialize default config, rules, and register with AI clients",
+        help="Initialize default config.toml, instructions, and register MCP with detected AI clients",
     )
     group.add_argument(
+        "-c",
         "--config",
         nargs="*",
         metavar="CMD",
-        help="Manage databases in config.toml (interactive dashboard, or subcommands: list, add, disable, enable, delete, edit)",
+        help="Manage databases in config.toml (no args = interactive dashboard; subcommands: list, add, disable, enable, delete, edit)",
     )
     group.add_argument(
+        "-C",
         "--check-config",
         action="store_true",
-        help="Validate configuration syntax, driver definitions, permissions, and credentials",
+        help="Validate configuration syntax, driver settings, file permissions, and credential references",
     )
     group.add_argument(
+        "-t",
         "--check-connection",
         nargs="*",
         metavar="DB",
-        help="Test physical database connectivity (no args = interactive, or pass 'all', or multiple DB names separated by spaces)",
+        help="Test physical database connectivity & latency (no args = interactive menu; pass 'all' or database names/aliases)",
     )
     group.add_argument(
+        "-u",
         "--check-update",
         action="store_true",
-        help="Check for latest releases and changelog on GitHub",
+        help="Check for latest releases, changelog, and new features on GitHub",
     )
     group.add_argument(
+        "-U",
         "--upgrade",
         action="store_true",
-        help="Upgrade db-grep to the latest version from GitHub",
+        help="Upgrade db-grep package directly to the latest release from GitHub",
     )
 
     parser.add_argument(
+        "-a",
         "--client",
         choices=[
             "claude",
@@ -217,7 +227,7 @@ def main():
             "all",
             "none",
         ],
-        help="Target AI client to configure when using --init (skip interactive prompt)",
+        help="Target AI client to configure when running --init / -i (skip interactive prompt; e.g. -i -a claude)",
     )
 
     args = parser.parse_args()
