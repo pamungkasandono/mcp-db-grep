@@ -789,13 +789,16 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 link.drop()
                 audit("denied", reason="monitor disconnected")
                 raise PermissionError("Monitor disconnected while waiting for approval")
-            if not json.loads(line)["approved"]:
+            resp = json.loads(line)
+            if not resp["approved"]:
                 audit("denied", reason="user")
                 raise PermissionError(
                     f"ACTION_DENIED_BY_USER: Query was rejected by user in terminal monitor.\n"
                     f"SQL: {sql}\n"
                     f"Context: {konteks}"
                 )
+            if resp.get("auto_session"):
+                audit("session_auto_approve", db=d.name, tool=tool, sql=sql)
 
         t0 = time.monotonic()
         try:

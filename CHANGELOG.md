@@ -22,10 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deduplicated section parsing loop, entry lookup (`_load_target_entry`), and duplicate not-found error messages in `config_manager.py`.
 - Centralized package version resolution in `cli.py` by reusing `updater.get_current_version()`.
 - **BREAKING**: Replaced flat `[db.<name>]` configuration format with driver-scoped `[db.<driver>.<name>]` tables for minimal maintenance and zero TOML key collisions.
-- Removed `pgsql:` prefix alias; always use explicit `postgres:<name>` or `oracle:<name>` when specifying driver type.
-- `check_connection` / `--check-connection` now tests all matching databases across drivers when given an unprefixed short name, while `postgres:<name>` or `oracle:<name>` targets a specific driver.
+- `check_connection` / `--check-connection` now tests all matching databases across drivers when given an unprefixed short name, while driver prefixes (`postgres:`/`pgsql:`, `oracle:`/`ora:`, `mysql:`/`my:`) target a specific driver.
 
 ### Added
+- Session-level auto-approve toggle (`[a]uto-approve session`) and on-demand lock hotkey (`[l]`) in `db-grep --monitor` with instant lock for 1 session, direct single-key picker for 2–4 sessions, and numbered multi-select menu for 5+ sessions.
 - MySQL driver support (`[db.mysql.<name>]`) via `pymysql` with read-only session enforcement, URI DSN validation (`mysql://...`), `sqlglot` MySQL dialect table extraction, and `--config add` interactive support.
 - `--config` interactive controller and CLI subcommands (`list`, `add`, `disable`, `enable`, `delete`, `edit`) to manage databases without manual file edits.
 - Comment-based non-destructive disable/enable preserving credentials with optional audit reason tags (`# [DISABLED: reason] [db.<driver>.<name>]`).

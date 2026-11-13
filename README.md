@@ -160,10 +160,15 @@ db-grep --check-connection pgsql:inventory-core ora:payroll-prod my:orders-app
    ━━ 14:10:05 [A] query @ pgsql:my-postgres ━━
    my-project · get latest users
    SELECT id, username, email FROM users LIMIT 5;
-   Allow? [y/n]
+   Allow? [y]es once / [a]uto-approve session / [n]o: 
    ```
-   - Press **`y`**: Query runs, result table is displayed, rows are sent to AI.
-   - Press **`n`**: Query cancelled, AI stops and explains why the query was needed.
+   - Press **`y`**: Approve this single query; result table is displayed and rows are sent to AI.
+   - Press **`a`**: Enable **Auto-Approve Session** for `[A]`; all subsequent queries in this session run automatically until you lock it again.
+   - Press **`n`**: Query cancelled; AI stops immediately and explains why the query was needed.
+   - Press **`l`** *(anytime while `⚡ AUTO-APPROVE ON` is active)*: Lock auto-approve and restore manual `[y/n]` approval:
+     - **1 active session**: Locks immediately on pressing `l`.
+     - **2–4 active sessions**: Select session directly by pressing its key (`A` / `B` / `C` / `D`) or `*` / `Enter` to lock all.
+     - **5+ active sessions**: Displays a numbered session list supporting multi-select (`1`, `1,3`, `1-5`, or `all`).
 
 *Forgot to start the monitor?*
 Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep --monitor`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
