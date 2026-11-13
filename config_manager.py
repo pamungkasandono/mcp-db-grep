@@ -332,14 +332,46 @@ def prompt_add_interactive() -> bool:
 
 def view_raw_config():
     ensure_config_exists()
-    editor = os.environ.get("EDITOR") or ("nano" if os.name == "posix" else "notepad")
-    print(f"\nOpening {CONFIG} in {editor}...")
-    try:
-        subprocess.run([editor, str(CONFIG)])
-    except Exception as e:
-        print(f"Could not launch editor {editor}: {e}")
-        print("\n--- Raw config.toml content ---")
-        print(CONFIG.read_text(encoding="utf-8"))
+    custom_editor = os.environ.get("EDITOR")
+    if custom_editor:
+        print(f"\nOpening {CONFIG} in {custom_editor}...")
+        try:
+            subprocess.run([custom_editor, str(CONFIG)], check=False)
+            return
+        except Exception as e:
+            print(f"Could not launch editor {custom_editor}: {e}")
+
+    if sys.platform == "win32":
+        print(f"\nOpening {CONFIG} in notepad...")
+        try:
+            subprocess.Popen(
+                ["notepad", str(CONFIG)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+            )
+            return
+        except Exception as e:
+            if hasattr(os, "startfile"):
+                try:
+                    os.startfile(str(CONFIG))
+                    return
+                except Exception:
+                    pass
+            print(f"Could not launch editor notepad: {e}")
+    else:
+        editor = "nano"
+        print(f"\nOpening {CONFIG} in {editor}...")
+        try:
+            subprocess.run([editor, str(CONFIG)])
+            return
+        except Exception as e:
+            print(f"Could not launch editor {editor}: {e}")
+
+    print("\n--- Raw config.toml content ---")
+    print(CONFIG.read_text(encoding="utf-8"))
 
 
 def run_interactive_dashboard():

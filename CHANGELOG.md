@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Prevented terminal hang on Windows after closing Notepad in `db-grep --config edit` (`view_raw_config()`) by launching `notepad` detached without inheriting console stdio handles (`subprocess.Popen` with `DEVNULL` / `os.startfile` fallback).
 - Standardized OS-resolved config paths (`get_opencode_config_path`, `get_antigravity_config_path`, `get_pi_config_path`) and menu column spacing across all harness entries in `installer.py`.
 - Prevented false-positive raw secret detection when `${env:...}` or `${file:...}` references are used in DSN username, host, or port without an inline plaintext password.
 - Validated Oracle `user` requirement against the resolved DSN so full Oracle DSNs loaded via `env:` / `file:` (`user/pass@host:port/service`) work without a duplicate `user` key.

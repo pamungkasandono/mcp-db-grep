@@ -195,6 +195,30 @@ dsn = "postgres://localhost/ecom"
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    def test_view_raw_config_windows_non_blocking_popen(self):
+        sample = b"[monitor]\nport = 48260\n"
+        with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as tmp:
+            tmp.write(sample)
+            tmp_path = Path(tmp.name)
+
+        try:
+            with patch.object(config_manager, "CONFIG", tmp_path), patch.object(
+                config_manager.sys, "platform", "win32"
+            ), patch.dict("os.environ", {}, clear=True), patch.object(
+                config_manager.subprocess, "Popen"
+            ) as mock_popen, patch.object(
+                config_manager.subprocess, "run"
+            ) as mock_run:
+                config_manager.view_raw_config()
+                mock_popen.assert_called_once()
+                args, kwargs = mock_popen.call_args
+                self.assertEqual(args[0], ["notepad", str(tmp_path)])
+                self.assertEqual(kwargs.get("stdin"), config_manager.subprocess.DEVNULL)
+                self.assertTrue(kwargs.get("close_fds"))
+                mock_run.assert_not_called()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()
