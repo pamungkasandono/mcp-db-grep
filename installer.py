@@ -111,16 +111,6 @@ def write_json_file(path: Path, data: dict):
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _appdata_config_path(rel_path: str, mac_support: bool = True, linux_rel: str | None = None) -> Path:
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        base = Path(appdata) if appdata else Path("~/AppData/Roaming").expanduser()
-        return base / rel_path
-    if sys.platform == "darwin" and mac_support:
-        return Path(f"~/Library/Application Support/{rel_path}").expanduser()
-    return Path(f"~/.config/{linux_rel or rel_path}").expanduser()
-
-
 def _home_config_path(rel_path: str) -> Path:
     if sys.platform == "win32":
         userprofile = os.environ.get("USERPROFILE")
@@ -129,8 +119,30 @@ def _home_config_path(rel_path: str) -> Path:
     return Path(f"~/{rel_path}").expanduser()
 
 
+def _appdata_config_path(rel_path: str, mac_support: bool = True, linux_rel: str | None = None) -> Path:
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else _home_config_path("AppData/Roaming")
+        return base / rel_path
+    if sys.platform == "darwin" and mac_support:
+        return _home_config_path(f"Library/Application Support/{rel_path}")
+    return _home_config_path(f".config/{linux_rel or rel_path}")
+
+
 def get_claude_desktop_config_path() -> Path:
     return _appdata_config_path("Claude/claude_desktop_config.json")
+
+
+def get_opencode_config_path() -> Path:
+    opencode_dir = _home_config_path(".config/opencode")
+    target_json = opencode_dir / "opencode.jsonc"
+    if not target_json.exists() and (opencode_dir / "opencode.json").exists():
+        return opencode_dir / "opencode.json"
+    return target_json
+
+
+def get_antigravity_config_path() -> Path:
+    return _home_config_path(".gemini/config/mcp_config.json")
 
 
 def get_cursor_config_path() -> Path:
@@ -151,7 +163,11 @@ def get_zed_config_path() -> Path:
 
 def get_pi_agent_dir() -> Path:
     env_dir = os.environ.get("PI_CODING_AGENT_DIR")
-    return Path(env_dir).expanduser() if env_dir else Path("~/.pi/agent").expanduser()
+    return Path(env_dir).expanduser() if env_dir else _home_config_path(".pi/agent")
+
+
+def get_pi_config_path() -> Path:
+    return get_pi_agent_dir() / "mcp.json"
 
 
 STD_MCP_ENTRY = {"command": "db-grep", "args": ["--server"]}
@@ -203,16 +219,12 @@ def install_claude_desktop(_instructions_file: Path):
 
 # 3. OpenCode
 def detect_opencode() -> bool:
-    return _detect_path_or_bin(Path("~/.config/opencode").expanduser(), "opencode", check_parent=False)
+    return _detect_path_or_bin(get_opencode_config_path(), "opencode")
 
 
 def install_opencode(instructions_file: Path):
-    opencode_dir = Path("~/.config/opencode").expanduser()
-    opencode_dir.mkdir(parents=True, exist_ok=True)
-    target_json = opencode_dir / "opencode.jsonc"
-    if not target_json.exists():
-        alt = opencode_dir / "opencode.json"
-        target_json = alt if alt.exists() else opencode_dir / "opencode.jsonc"
+    target_json = get_opencode_config_path()
+    target_json.parent.mkdir(parents=True, exist_ok=True)
 
     data = read_json_file(target_json)
 
@@ -235,12 +247,12 @@ def install_opencode(instructions_file: Path):
 
 # 4. Antigravity
 def detect_antigravity() -> bool:
-    agy_cfg = Path("~/.gemini/config/mcp_config.json").expanduser()
-    return _detect_path_or_bin(agy_cfg, "antigravity") or Path("~/.gemini").expanduser().exists()
+    agy_cfg = get_antigravity_config_path()
+    return _detect_path_or_bin(agy_cfg, "antigravity") or agy_cfg.parent.parent.exists()
 
 
 def install_antigravity(_instructions_file: Path):
-    _install_json_mcp(Path("~/.gemini/config/mcp_config.json").expanduser(), "Antigravity")
+    _install_json_mcp(get_antigravity_config_path(), "Antigravity")
 
 
 # 5. Cursor
@@ -302,11 +314,11 @@ def install_zed(_instructions_file: Path):
 
 # 9. Pi
 def detect_pi() -> bool:
-    return _detect_path_or_bin(get_pi_agent_dir(), "pi", check_parent=False)
+    return _detect_path_or_bin(get_pi_config_path(), "pi")
 
 
 def install_pi(_instructions_file: Path):
-    _install_json_mcp(get_pi_agent_dir() / "mcp.json", "Pi")
+    _install_json_mcp(get_pi_config_path(), "Pi")
 
 
 # ---------------- Registry Definition in Exact Requested Order ----------------
@@ -329,14 +341,14 @@ HARNESS_REGISTRY = [
     {
         "id": "opencode",
         "name": "OpenCode",
-        "desc": "~/.config/opencode/opencode.jsonc",
+        "desc": lambda: str(get_opencode_config_path()),
         "detect": detect_opencode,
         "install": install_opencode,
     },
     {
         "id": "antigravity",
         "name": "Antigravity",
-        "desc": "~/.gemini/config/mcp_config.json",
+        "desc": lambda: str(get_antigravity_config_path()),
         "detect": detect_antigravity,
         "install": install_antigravity,
     },
@@ -371,7 +383,7 @@ HARNESS_REGISTRY = [
     {
         "id": "pi",
         "name": "Pi Coding Agent",
-        "desc": lambda: str(get_pi_agent_dir() / "mcp.json"),
+        "desc": lambda: str(get_pi_config_path()),
         "detect": detect_pi,
         "install": install_pi,
     },
@@ -391,8 +403,8 @@ def ask_user_choices(detected_map: dict) -> list[str]:
         desc_val = item["desc"]() if callable(item["desc"]) else item["desc"]
         print(f"  [{idx}] {hid:<16} - {item['name']} ({desc_val}) {status}")
 
-    print("  [a]  all              - Force configure all harnesses")
-    print("  [n]  none             - Skip harness configuration")
+    print(f"  [a] {'all':<16} - Force configure all harnesses")
+    print(f"  [n] {'none':<16} - Skip for now (no harnesses configured)")
 
     if detected_ids:
         default_label = f"detected only ({', '.join(detected_ids)})"
@@ -430,7 +442,7 @@ def ask_user_choices(detected_map: dict) -> list[str]:
 
 
 def run_init(target_harness: str = None):
-    config_dir = Path("~/.config/db-grep").expanduser()
+    config_dir = _home_config_path(".config/db-grep")
     config_dir.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
         config_dir.chmod(0o700)
@@ -480,5 +492,5 @@ def run_init(target_harness: str = None):
             print(f"  ? Unknown harness: {t}")
 
     print("\nSetup complete! Next steps:")
-    print(f"1. Add your database connections to: {config_file}")
+    print(f"1. Run 'db-grep --config add' (or 'db-grep --config') to add database connections (or edit {config_file})")
     print("2. Run 'db-grep --monitor' in a terminal before starting your AI chat.")
