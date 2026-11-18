@@ -538,14 +538,26 @@ class Oracle(DB):
 
     def connect(self):
         import oracledb
+        import oracle_driver
+
+        oracle_driver.ensure_thick_mode()
         dsn = self.get_dsn()
         pw = self.get_password()
         user = self.get_user()
-        if user or pw:
-            self.conn = oracledb.connect(user=user or "", password=pw or "", dsn=dsn)
-        else:
-            self.conn = oracledb.connect(dsn=dsn)
-        self.conn.call_timeout = self.timeout_ms
+        try:
+            if user or pw:
+                self.conn = oracledb.connect(user=user or "", password=pw or "", dsn=dsn)
+            else:
+                self.conn = oracledb.connect(dsn=dsn)
+            self.conn.call_timeout = self.timeout_ms
+        except Exception as e:
+            if "DPY-3015" in str(e):
+                raise oracledb.DatabaseError(
+                    f"{e}\n"
+                    "Tip: Database uses legacy Oracle 10g authentication. "
+                    "Run 'db-grep --setup-driver oracle' to automatically download and configure the driver."
+                ) from e
+            raise
 
     def healthy(self):
         return self.conn.is_healthy()

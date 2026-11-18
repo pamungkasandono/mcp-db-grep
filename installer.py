@@ -523,3 +523,25 @@ def run_init(target_harness: str = None):
     print("\nSetup complete! Next steps:")
     print(f"1. Run 'db-grep --config add' (or 'db-grep --config') to add database connections (or edit {config_file})")
     print("2. Run 'db-grep --monitor' in a terminal before starting your AI chat.")
+
+    # Check if Oracle is configured and driver is missing
+    try:
+        import oracle_driver
+        if not oracle_driver.is_driver_installed() and sys.stdin.isatty():
+            import tomllib
+            if config_file.exists():
+                cfg_data = tomllib.loads(config_file.read_text(encoding="utf-8"))
+                has_oracle = any(
+                    isinstance(v, dict) and (v.get("type") == "oracle" or k.startswith("oracle:") or k.startswith("ora:"))
+                    for k, v in cfg_data.get("db", {}).items()
+                )
+                if has_oracle:
+                    print("\n[!] Oracle database detected in configuration.")
+                    try:
+                        ans = input("Would you like to install the Oracle Instant Client driver now for legacy 10g support? [Y/n]: ").strip().lower()
+                        if ans in ("", "y", "yes"):
+                            oracle_driver.download_and_install_driver()
+                    except (KeyboardInterrupt, EOFError):
+                        pass
+    except Exception:
+        pass

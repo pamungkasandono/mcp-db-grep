@@ -143,11 +143,39 @@ def run_check_connection_cli(targets: list[str] | str):
             has_failure = True
             print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
 
+    failed_legacy_oracle = [
+        res["db"] for res in results
+        if res["status"] != "connected" and "DPY-3015" in (res.get("error") or "")
+    ]
+    if failed_legacy_oracle and sys.stdin.isatty():
+        import oracle_driver
+        if not oracle_driver.is_driver_installed():
+            print("\n[!] Oracle database requires legacy 10g client driver.")
+            try:
+                ans = input("Would you like db-grep to download the Oracle Instant Client driver now? [Y/n]: ").strip().lower()
+                if ans in ("", "y", "yes"):
+                    oracle_driver.download_and_install_driver()
+                    oracle_driver.ensure_thick_mode()
+                    print("\nRe-testing Oracle connections...")
+                    retry_results = server.execute_connection_check(failed_legacy_oracle, all_dbs=all_dbs)
+                    has_failure = False
+                    for res in retry_results:
+                        if res["status"] == "connected":
+                            print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
+                        else:
+                            has_failure = True
+                            print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
+            except (KeyboardInterrupt, EOFError):
+                pass
+
     print()
     sys.exit(1 if has_failure else 0)
 
 
 def main():
+    import oracle_driver
+    oracle_driver.ensure_oracle_env()
+
     parser = argparse.ArgumentParser(
         prog="db-grep",
         description=f"db-grep v{__version__} - Database MCP CLI: Run MCP Server or Terminal Monitor",
@@ -209,6 +237,13 @@ def main():
         "--upgrade",
         action="store_true",
         help="Upgrade db-grep package directly to the latest release from GitHub",
+    )
+    group.add_argument(
+        "--setup-driver",
+        nargs="?",
+        const="status",
+        metavar="DRIVER",
+        help="Inspect or configure database drivers (e.g. 'oracle', or omit DRIVER to show status)",
     )
 
     parser.add_argument(
@@ -289,6 +324,9 @@ def main():
     elif args.upgrade:
         import updater
         updater.execute_upgrade()
+    elif args.setup_driver is not None:
+        import driver_manager
+        driver_manager.setup_driver(args.setup_driver)
     else:
         print(f"db-grep v{__version__}\n")
         parser.print_help()
