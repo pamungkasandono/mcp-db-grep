@@ -401,6 +401,48 @@ class DB:
     DESC_SQL = ("SELECT column_name, data_type, is_nullable FROM information_schema.columns "
                 "WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position")
 
+    @staticmethod
+    def _clean_pattern(pattern: str) -> str:
+        clean = pattern.strip().replace("*", "%") if pattern else "%"
+        if not clean:
+            return "%"
+        if not clean.startswith("%") and not clean.endswith("%"):
+            return f"%{clean}%"
+        return clean
+
+    def get_search_query(self, pattern: str, schema: str = "", object_type: str = "ALL", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        conds = [
+            "table_schema NOT IN ('pg_catalog', 'information_schema')",
+            "UPPER(table_name) LIKE UPPER(%s)"
+        ]
+        params = [clean_pat]
+
+        ot = (object_type or "ALL").strip().upper()
+        if ot == "TABLE":
+            conds.append("table_type = 'BASE TABLE'")
+        elif ot == "VIEW":
+            conds.append("table_type = 'VIEW'")
+        else:
+            conds.append("table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN TABLE')")
+
+        if schema:
+            conds.append("LOWER(table_schema) = LOWER(%s)")
+            params.append(schema.strip())
+
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+
+        sql = (
+            "SELECT table_schema AS schema_name, table_name AS object_name, "
+            "CASE WHEN table_type = 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS object_type "
+            "FROM information_schema.tables "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY table_schema, table_name "
+            "LIMIT %s"
+        )
+        return sql, tuple(params)
+
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
@@ -500,6 +542,39 @@ class MySQL(DB):
             return self.cfg["schema"]
         return urlparse(self.get_dsn()).path.lstrip("/")
 
+    def get_search_query(self, pattern: str, schema: str = "", object_type: str = "ALL", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        conds = [
+            "table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')",
+            "UPPER(table_name) LIKE UPPER(%s)"
+        ]
+        params = [clean_pat]
+
+        ot = (object_type or "ALL").strip().upper()
+        if ot == "TABLE":
+            conds.append("table_type = 'BASE TABLE'")
+        elif ot == "VIEW":
+            conds.append("table_type = 'VIEW'")
+        else:
+            conds.append("table_type IN ('BASE TABLE', 'VIEW')")
+
+        if schema:
+            conds.append("LOWER(table_schema) = LOWER(%s)")
+            params.append(schema.strip())
+
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+
+        sql = (
+            "SELECT table_schema AS schema_name, table_name AS object_name, "
+            "CASE WHEN table_type = 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS object_type "
+            "FROM information_schema.tables "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY table_schema, table_name "
+            "LIMIT %s"
+        )
+        return sql, tuple(params)
+
     def connect(self):
         import pymysql
         dsn = self.get_dsn()
@@ -528,13 +603,63 @@ class MySQL(DB):
 
 
 class Oracle(DB):
-    LIST_SQL = "SELECT table_name FROM all_tables WHERE owner = UPPER(:1)"
-    DESC_SQL = ("SELECT column_name, data_type, nullable FROM all_tab_columns "
-                "WHERE owner = UPPER(:1) AND table_name = UPPER(:2) ORDER BY column_id")
+    LIST_SQL = ("SELECT table_name FROM all_tables WHERE owner = UPPER(:1) "
+                "UNION "
+                "SELECT view_name AS table_name FROM all_views WHERE owner = UPPER(:1) "
+                "ORDER BY table_name")
+    DESC_SQL = (
+        "SELECT column_name, data_type, nullable FROM all_tab_columns "
+        "WHERE (owner = UPPER(:1) AND table_name = UPPER(:2)) "
+        "   OR (owner, table_name) IN ("
+        "       SELECT table_owner, table_name FROM all_synonyms "
+        "       WHERE owner IN (UPPER(:1), 'PUBLIC') AND synonym_name = UPPER(:2)"
+        "   ) "
+        "ORDER BY column_id"
+    )
 
     @property
     def default_schema(self):
         return self.cfg.get("schema", self.get_user() or self.cfg.get("user", ""))
+
+    def get_search_query(self, pattern: str, schema: str = "", object_type: str = "ALL", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        ot = (object_type or "ALL").strip().upper()
+        if ot == "TABLE":
+            type_filter = "object_type IN ('TABLE')"
+        elif ot == "VIEW":
+            type_filter = "object_type IN ('VIEW', 'MATERIALIZED VIEW')"
+        elif ot == "SYNONYM":
+            type_filter = "object_type IN ('SYNONYM')"
+        else:
+            type_filter = "object_type IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW')"
+
+        conds = [type_filter, "UPPER(object_name) LIKE UPPER(:1)"]
+        params = [clean_pat]
+
+        idx = 2
+        if schema:
+            conds.append(f"owner = UPPER(:{idx})")
+            params.append(schema.strip())
+            idx += 1
+        else:
+            conds.append(
+                "owner NOT IN ('SYS', 'SYSTEM', 'DBSNMP', 'CTXSYS', 'MDSYS', "
+                "'XDB', 'OUTLN', 'WMSYS', 'APPQOSSYS', 'AUDSYS', 'GSMADMIN_INTERNAL', "
+                "'LBACSYS', 'OJVMSYS')"
+            )
+
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+
+        sql = (
+            "SELECT schema_name, object_name, object_type FROM ("
+            "SELECT owner AS schema_name, object_name, object_type "
+            "FROM all_objects "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY owner, object_name"
+            f") WHERE ROWNUM <= :{idx}"
+        )
+        return sql, tuple(params)
 
     def connect(self):
         import oracledb
@@ -751,7 +876,7 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
     auto_allow = False
     auto_reason = None
 
-    if tool == "list_tables":
+    if tool in ("list_tables", "find_objects"):
         if auto_metadata:
             auto_allow = True
             auto_reason = "auto_metadata = true"
@@ -1039,16 +1164,41 @@ async def list_databases() -> str:
 
 @mcp.tool()
 async def list_tables(db: DbName, konteks: Konteks, schema: str = "") -> str:
-    """List table names in a schema (default: connection default schema). Requires user approval."""
+    """List table and view names in a schema (default: connection default schema). Requires user approval."""
     d = get_db(db)
     return await execute("list_tables", d, konteks, d.LIST_SQL, (schema or d.default_schema,))
 
 
 @mcp.tool()
-async def describe_table(db: DbName, table: str, konteks: Konteks, schema: str = "") -> str:
-    """Columns, data types, and nullability of a table. Requires user approval."""
+async def find_objects(
+    db: DbName,
+    konteks: Konteks,
+    pattern: str,
+    schema: str = "",
+    object_type: str = "ALL",
+    limit: int = 50,
+) -> str:
+    """Search for tables, views, or synonyms matching a pattern/keyword (case-insensitive).
+    Searches across all accessible schemas if schema is empty.
+    Returns list of matching objects with schema_name, object_name, and object_type.
+    Recommended over list_tables for searching specific tables/views or exploring enterprise databases."""
     d = get_db(db)
-    return await execute("describe_table", d, konteks, d.DESC_SQL, (schema or d.default_schema, table))
+    sql, params = d.get_search_query(pattern, schema=schema, object_type=object_type, limit=limit)
+    return await execute("find_objects", d, konteks, sql, params)
+
+
+@mcp.tool()
+async def describe_table(db: DbName, table: str, konteks: Konteks, schema: str = "") -> str:
+    """Columns, data types, and nullability of a table or view. Supports 'schema.table' format. Requires user approval."""
+    d = get_db(db)
+    table_clean = table.strip().strip('"').strip("'")
+    target_schema = schema.strip()
+    if "." in table_clean and not target_schema:
+        parts = table_clean.split(".", 1)
+        target_schema = parts[0].strip().strip('"').strip("'")
+        table_clean = parts[1].strip().strip('"').strip("'")
+
+    return await execute("describe_table", d, konteks, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
 
 
 @mcp.tool()

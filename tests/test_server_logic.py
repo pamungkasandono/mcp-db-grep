@@ -339,6 +339,121 @@ description = "MySQL Orders DB"
                 self.assertEqual(call_kwargs["password"], "my_secret_pw")
                 self.assertEqual(call_kwargs["database"], "orders_db")
 
+    def test_clean_pattern_helper(self):
+        self.assertEqual(server.DB._clean_pattern("people"), "%people%")
+        self.assertEqual(server.DB._clean_pattern("vw_people%"), "vw_people%")
+        self.assertEqual(server.DB._clean_pattern("%people"), "%people")
+        self.assertEqual(server.DB._clean_pattern("*people*"), "%people%")
+        self.assertEqual(server.DB._clean_pattern(""), "%")
+        self.assertEqual(server.DB._clean_pattern("   "), "%")
+
+    def test_postgres_get_search_query(self):
+        pg = server.Postgres("postgres:test", {"type": "postgres", "max_rows": 100})
+        # Default all types, no schema
+        sql, params = pg.get_search_query("people", limit=50)
+        self.assertIn("table_schema NOT IN ('pg_catalog', 'information_schema')", sql)
+        self.assertIn("UPPER(table_name) LIKE UPPER(%s)", sql)
+        self.assertIn("table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN TABLE')", sql)
+        self.assertIn("LIMIT %s", sql)
+        self.assertEqual(params, ("%people%", 50))
+
+        # Explicit schema and object_type TABLE
+        sql, params = pg.get_search_query("users", schema="public", object_type="TABLE", limit=20)
+        self.assertIn("table_type = 'BASE TABLE'", sql)
+        self.assertIn("LOWER(table_schema) = LOWER(%s)", sql)
+        self.assertEqual(params, ("%users%", "public", 20))
+
+        # Object_type VIEW
+        sql, params = pg.get_search_query("vw_%", object_type="VIEW")
+        self.assertIn("table_type = 'VIEW'", sql)
+        self.assertEqual(params[0], "vw_%")
+
+    def test_mysql_get_search_query(self):
+        my = server.MySQL("mysql:test", {"type": "mysql", "max_rows": 100})
+        sql, params = my.get_search_query("orders", limit=30)
+        self.assertIn("table_schema NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')", sql)
+        self.assertIn("UPPER(table_name) LIKE UPPER(%s)", sql)
+        self.assertIn("table_type IN ('BASE TABLE', 'VIEW')", sql)
+        self.assertEqual(params, ("%orders%", 30))
+
+        # With specific schema
+        sql, params = my.get_search_query("items", schema="shop_db", object_type="VIEW", limit=10)
+        self.assertIn("LOWER(table_schema) = LOWER(%s)", sql)
+        self.assertIn("table_type = 'VIEW'", sql)
+        self.assertEqual(params, ("%items%", "shop_db", 10))
+
+    def test_oracle_get_search_query(self):
+        ora = server.Oracle("oracle:test", {"type": "oracle", "max_rows": 100})
+        # Default search across non-sys schemas
+        sql, params = ora.get_search_query("people", limit=50)
+        self.assertIn("FROM all_objects", sql)
+        self.assertIn("UPPER(object_name) LIKE UPPER(:1)", sql)
+        self.assertIn("owner NOT IN ('SYS', 'SYSTEM'", sql)
+        self.assertIn("object_type IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW')", sql)
+        self.assertIn("WHERE ROWNUM <= :2", sql)
+        self.assertEqual(params, ("%people%", 50))
+
+        # Specific schema and VIEW type
+        sql, params = ora.get_search_query("peo_vw%", schema="bni_portal", object_type="VIEW", limit=25)
+        self.assertIn("owner = UPPER(:2)", sql)
+        self.assertIn("object_type IN ('VIEW', 'MATERIALIZED VIEW')", sql)
+        self.assertIn("WHERE ROWNUM <= :3", sql)
+        self.assertEqual(params, ("peo_vw%", "bni_portal", 25))
+
+        # SYNONYM type
+        sql, params = ora.get_search_query("syn_test", object_type="SYNONYM")
+        self.assertIn("object_type IN ('SYNONYM')", sql)
+
+    def test_oracle_list_and_desc_sql(self):
+        ora = server.Oracle("oracle:test", {"type": "oracle", "max_rows": 100})
+        self.assertIn("UNION", ora.LIST_SQL)
+        self.assertIn("all_views", ora.LIST_SQL)
+        self.assertIn("all_synonyms", ora.DESC_SQL)
+        self.assertIn("all_tab_columns", ora.DESC_SQL)
+
+    def test_describe_table_dot_notation_parsing(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.crm]
+dsn = "postgres://localhost/crm"
+"""
+        with self.temp_config(sample_toml):
+            with patch.object(server, "execute", return_value="[]") as mock_exec:
+                # 1. table with dot format 'schema.table'
+                asyncio.run(server.describe_table("crm", "billing.invoices", "crm · desc"))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "describe_table")
+                # params passed to execute: (schema, table)
+                self.assertEqual(call_args[4], ("billing", "invoices"))
+
+            with patch.object(server, "execute", return_value="[]") as mock_exec:
+                # 2. explicit schema overrides dot
+                asyncio.run(server.describe_table("crm", "invoices", "crm · desc", schema="custom_schema"))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[4], ("custom_schema", "invoices"))
+
+    def test_find_objects_mcp_tool(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.crm]
+dsn = "postgres://localhost/crm"
+"""
+        with self.temp_config(sample_toml):
+            with patch.object(server, "execute", return_value='[{"schema_name":"public","object_name":"users","object_type":"TABLE"}]') as mock_exec:
+                out_str = asyncio.run(server.find_objects("crm", "crm · find users", "user", schema="public", limit=10))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "find_objects")
+                self.assertIn("FROM information_schema.tables", call_args[3])
+                self.assertEqual(call_args[4], ("%user%", "public", 10))
+                data = json.loads(out_str)
+                self.assertEqual(len(data), 1)
+                self.assertEqual(data[0]["object_name"], "users")
+
 
 if __name__ == "__main__":
     unittest.main()

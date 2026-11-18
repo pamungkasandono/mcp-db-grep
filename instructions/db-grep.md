@@ -38,3 +38,10 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
    - Use the `question` tool (or prompt choice) to ask user:
      - "Retry query (I will approve in monitor)"
      - "Continue without database query"
+
+---
+
+## Case 3: Efficient Object & Schema Exploration
+1. **Always prefer `find_objects` over `list_tables` when searching for specific tables, views, or synonyms**:
+   - `find_objects` filters at the database engine level, prevents cap-limit truncation on enterprise databases, and searches across all accessible schemas (Oracle, PostgreSQL, MySQL).
+   - Use `list_tables` only when you need to inspect all objects inside a single known schema.

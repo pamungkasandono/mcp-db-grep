@@ -53,7 +53,7 @@ port = 48260
 approval_timeout_s = 110      # auto-reject after 110s without response
 
 [defaults]
-auto_metadata = true          # list_tables & describe_table without y/n
+auto_metadata = true          # list_tables, find_objects & describe_table without y/n
 max_rows = 100
 timeout_ms = 10000
 
