@@ -16,7 +16,7 @@ def get_current_version() -> str:
     try:
         return version("db-grep")
     except PackageNotFoundError:
-        return "0.3.0"
+        return "0.3.1"
 
 
 def parse_semver(ver_str: str) -> tuple[int, int, int]:
@@ -32,13 +32,91 @@ def parse_semver(ver_str: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
-def fetch_latest_release() -> dict:
+def _fetch_latest_via_web_redirect() -> dict:
+    """Fallback: Get latest release tag via GitHub web redirect (not subject to api.github.com rate limits)."""
+    url = f"https://github.com/{GITHUB_REPO}/releases/latest"
     req = urllib.request.Request(
-        LATEST_RELEASE_API,
-        headers={"User-Agent": "db-grep-updater"},
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        final_url = resp.geturl()
+        if "/tag/" in final_url:
+            tag_name = final_url.split("/tag/")[-1].strip()
+            return {
+                "tag_name": tag_name,
+                "body": "",
+                "html_url": final_url,
+            }
+    raise ValueError(f"Could not extract tag from redirect URL: {final_url}")
+
+
+def _fetch_latest_via_git() -> dict:
+    """Fallback: Query git tags directly via git ls-remote."""
+    repo_url = f"https://github.com/{GITHUB_REPO}.git"
+    res = subprocess.run(
+        ["git", "ls-remote", "--tags", repo_url],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(f"git ls-remote failed with exit code {res.returncode}")
+
+    tags = set()
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("refs/tags/"):
+            tag = parts[1].replace("refs/tags/", "").replace("^{}", "").strip()
+            if tag:
+                tags.add(tag)
+    if not tags:
+        raise ValueError("No tags found via git ls-remote")
+
+    sorted_tags = sorted(tags, key=parse_semver)
+    latest_tag = sorted_tags[-1]
+    return {
+        "tag_name": latest_tag,
+        "body": "",
+        "html_url": f"https://github.com/{GITHUB_REPO}/releases/tag/{latest_tag}",
+    }
+
+
+def fetch_latest_release() -> dict:
+    headers = {"User-Agent": "db-grep-updater"}
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    req = urllib.request.Request(
+        LATEST_RELEASE_API,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Fallback if rate limited (403) or other HTTP error
+        try:
+            return _fetch_latest_via_web_redirect()
+        except Exception:
+            pass
+        try:
+            return _fetch_latest_via_git()
+        except Exception:
+            pass
+        raise e
+    except Exception as e:
+        # Fallback for network issues contacting api.github.com
+        try:
+            return _fetch_latest_via_web_redirect()
+        except Exception:
+            pass
+        try:
+            return _fetch_latest_via_git()
+        except Exception:
+            pass
+        raise e
 
 
 def check_for_updates() -> dict:
@@ -178,6 +256,8 @@ def run_check_update_cli(prompt_upgrade: bool = True):
 
     if not info["success"]:
         print(f"Could not check for updates: {info.get('error')}")
+        print("\nTip: You can upgrade directly without checking by running:")
+        print("  db-grep -U   (or: db-grep --upgrade)")
         sys.exit(1)
 
     curr = info["current_version"]

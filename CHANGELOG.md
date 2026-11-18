@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-18
+
+### Fixed
+- Handled GitHub API rate limit errors (`HTTP Error 403: rate limit exceeded`) gracefully during `db-grep --check-update`:
+  - Added support for `GITHUB_TOKEN` and `GH_TOKEN` environment variables to authenticate GitHub REST API requests (5,000 req/hr).
+  - Implemented automatic two-tier fallback: resolving latest version via GitHub web redirect (`releases/latest`) and direct Git protocol queries (`git ls-remote --tags`).
+  - Added actionable CLI hints pointing to direct `db-grep -U` / `db-grep --upgrade` if update checks fail.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added

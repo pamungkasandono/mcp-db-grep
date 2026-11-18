@@ -101,5 +101,39 @@ class TestUpdater(unittest.TestCase):
             self.assertEqual([p for p, _ in pids_win], [3001])
 
 
+    def test_fetch_latest_via_git_parses_tags(self):
+        sample_git_output = (
+            "7b4c847 refs/tags/v0.1.0\n"
+            "cbf2373 refs/tags/v0.1.0^{}\n"
+            "926d5b8 refs/tags/v0.2.0\n"
+            "37a95a3 refs/tags/v0.2.1\n"
+            "8cf6a7f refs/tags/v0.3.0\n"
+            "a663b17 refs/tags/v0.3.0^{}\n"
+        )
+        with patch.object(updater.subprocess, "run", return_value=MagicMock(returncode=0, stdout=sample_git_output)):
+            data = updater._fetch_latest_via_git()
+            self.assertEqual(data["tag_name"], "v0.3.0")
+            self.assertIn("v0.3.0", data["html_url"])
+
+    def test_fetch_latest_release_fallback_on_403(self):
+        import urllib.error
+        http_403 = urllib.error.HTTPError("url", 403, "rate limit exceeded", {}, None)
+        with patch("urllib.request.urlopen", side_effect=http_403):
+            with patch.object(updater, "_fetch_latest_via_web_redirect", return_value={"tag_name": "v0.3.0", "body": "", "html_url": "url"}) as mock_web:
+                data = updater.fetch_latest_release()
+                self.assertEqual(data["tag_name"], "v0.3.0")
+                mock_web.assert_called_once()
+
+    def test_fetch_latest_release_fallback_to_git_when_web_fails(self):
+        import urllib.error
+        http_403 = urllib.error.HTTPError("url", 403, "rate limit exceeded", {}, None)
+        with patch("urllib.request.urlopen", side_effect=http_403):
+            with patch.object(updater, "_fetch_latest_via_web_redirect", side_effect=Exception("Web failed")):
+                with patch.object(updater, "_fetch_latest_via_git", return_value={"tag_name": "v0.3.0", "body": "", "html_url": "url"}) as mock_git:
+                    data = updater.fetch_latest_release()
+                    self.assertEqual(data["tag_name"], "v0.3.0")
+                    mock_git.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
