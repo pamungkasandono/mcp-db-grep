@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-18
+
+### Added
+- **Dual-Phase `--monitor` (History Replay + Full Live Stream)**:
+  - **"Before" Phase**: Automatically replays recent database activity from `audit.jsonl` upon launching `db-grep --monitor`. Displays visual badges (`[PAUSED-OFFLINE]`, `[EXECUTED]`, `[AUTO-ALLOW]`, `[HEALTH-CHECK]`, `[METADATA]`, `[CONFIG-CHECK]`, `[REJECTED-BY-USER]`, `[BLOCKED]`, `[DB-ERROR]`) with query snippets, execution metrics, and offline pause notices.
+  - **"After" Phase**: Streams live actions in real time, expanding beyond queries to include live non-blocking streaming of `check_connection` pings with database latency stats, `list_databases`, and `check_config`.
+  - Added configurable `history_limit` setting in `config.toml` under `[monitor]` (default: `20`).
+- **Enriched Audit Logging**:
+  - Unified and enriched `audit.jsonl` records in `server.py` with `tool`, `db`, `context`, `sql`, and target summaries across all events (`blocked`, `auto_allow`, `denied`, `error`, `executed`, `check_connection`, `list_databases`).
+
 ## [0.4.0] - 2026-11-18
 
 ### Added

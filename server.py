@@ -829,6 +829,15 @@ class Link:
         self.writer.write((json.dumps(msg, default=str) + "\n").encode())
         await self.writer.drain()
 
+    async def notify(self, msg):
+        """Send non-blocking event notification to monitor if connected."""
+        if self.writer and not self.writer.is_closing():
+            try:
+                self.writer.write((json.dumps(msg, default=str) + "\n").encode())
+                await self.writer.drain()
+            except Exception:
+                pass
+
     def drop(self):
         if self.writer:
             self.writer.close()
@@ -903,7 +912,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
             # Wait up to 25s if monitor is not running yet
             await link.ensure(timeout_sec=25)
         except (OSError, asyncio.TimeoutError):
-            audit("denied", reason="monitor offline", db=d.name, context=context, sql=sql)
+            audit("denied", reason="monitor offline", db=d.name, context=context, sql=sql, tool=tool)
             raise PermissionError(
                 f"MONITOR_OFFLINE: Approval monitor is not running.\n"
                 f"Target Database: {d.name}\n"
@@ -915,11 +924,11 @@ async def execute(tool, d, context, sql, params=(), reject=None):
         msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "context": context, "sql": sql}
         if reject:
             await link.send({"type": "blocked", "reason": reject, **msg})
-            audit("blocked", reason=reject)
+            audit("blocked", reason=reject, tool=tool, db=d.name, context=context, sql=sql)
             raise ValueError(f"Rejected: {reject}")
 
         if auto_allow:
-            audit("auto_allow", db=d.name, tool=tool, reason=auto_reason, sql=sql)
+            audit("auto_allow", db=d.name, tool=tool, reason=auto_reason, sql=sql, context=context)
             await link.send({"type": "auto_allow", "reason": auto_reason, "params": params, **msg})
         else:
             audit("request", db=d.name, db_type=d.cfg.get("type", ""), context=context, tool=tool, sql=sql, params=params)
@@ -927,30 +936,30 @@ async def execute(tool, d, context, sql, params=(), reject=None):
             line = await link.reader.readline()  # timeout is managed by monitor
             if not line:
                 link.drop()
-                audit("denied", reason="monitor disconnected")
+                audit("denied", reason="monitor disconnected", tool=tool, db=d.name, context=context, sql=sql)
                 raise PermissionError("Monitor disconnected while waiting for approval")
             resp = json.loads(line)
             if not resp["approved"]:
-                audit("denied", reason="user")
+                audit("denied", reason="user", tool=tool, db=d.name, context=context, sql=sql)
                 raise PermissionError(
                     f"ACTION_DENIED_BY_USER: Query was rejected by user in terminal monitor.\n"
                     f"SQL: {sql}\n"
                     f"Context: {context}"
                 )
             if resp.get("auto_session"):
-                audit("session_auto_approve", db=d.name, tool=tool, sql=sql)
+                audit("session_auto_approve", db=d.name, tool=tool, sql=sql, context=context)
 
         t0 = time.monotonic()
         try:
             cols, rows = await asyncio.to_thread(d.run, sql, params)
         except Exception as e:
             redacted_err = d.redact(str(e))
-            audit("error", error=redacted_err)
+            audit("error", error=redacted_err, tool=tool, db=d.name, context=context, sql=sql)
             await link.send({"type": "error", "message": redacted_err})
             raise RuntimeError(redacted_err) from None
 
         ms = int((time.monotonic() - t0) * 1000)
-        audit("executed", rows=len(rows), ms=ms)  # query data itself is never logged
+        audit("executed", rows=len(rows), ms=ms, tool=tool, db=d.name, context=context, sql=sql)  # query data itself is never logged
         await link.send({"type": "result", "cols": cols, "rows": rows,
                          "ms": ms, "limit": d.max_rows})
         return json.dumps([dict(zip(cols, r)) for r in rows], default=str)
@@ -1111,7 +1120,8 @@ def execute_connection_check(target: str | list[str] = "all", all_dbs: dict | No
                     targets_to_check.append(resolved)
 
     results = [ping_database(key, all_dbs[key]) for key in targets_to_check]
-    audit("check_connection", targets=targets_to_check, count=len(results))
+    audit("check_connection", targets=targets_to_check, count=len(results),
+          results=[{"db": r["db"], "type": r["type"], "status": r["status"], "latency_ms": r.get("latency_ms", 0)} for r in results])
     return results
 
 
@@ -1121,6 +1131,7 @@ async def check_config() -> str:
     """Validate config.toml format, permissions, required fields, and environment variables. Does not query databases."""
     report = inspect_config()
     audit("check_config", valid=report["valid"])
+    await link.notify({"type": "event", "tool": "check_config", "valid": report["valid"]})
     return json.dumps(report, indent=2)
 
 
@@ -1128,6 +1139,13 @@ async def check_config() -> str:
 async def check_connection(db: str = "all") -> str:
     """Check database physical connectivity and latency using explicit health-check queries ('SELECT 1;' for Postgres, 'SELECT 1 FROM DUAL' for Oracle). Parameter 'db' can be 'all', a single database name, or comma-separated names. Does not require interactive monitor approval."""
     results = await asyncio.to_thread(execute_connection_check, db)
+    await link.notify({
+        "type": "event",
+        "tool": "check_connection",
+        "targets": [db] if isinstance(db, str) else list(db),
+        "count": len(results),
+        "results": [{"db": r["db"], "type": r["type"], "status": r["status"], "latency_ms": r.get("latency_ms", 0)} for r in results],
+    })
     return json.dumps(results, indent=2)
 
 
@@ -1161,7 +1179,9 @@ async def list_databases() -> str:
             item["aliases"] = aliases
         out.append(item)
 
-    audit("list_databases")
+    dbs_summary = [item["db"] for item in out]
+    audit("list_databases", count=len(out), databases=dbs_summary)
+    await link.notify({"type": "event", "tool": "list_databases", "count": len(out), "databases": dbs_summary})
     return json.dumps(out)
 
 

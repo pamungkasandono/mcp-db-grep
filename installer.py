@@ -51,6 +51,7 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
 SAMPLE_CONFIG = """[monitor]
 port = 48260
 approval_timeout_s = 110      # auto-reject after this many seconds without response
+history_limit = 20           # replay recent audit activity before monitor opened (0 = off)
 
 [defaults]
 auto_metadata = true          # list_tables, find_objects & describe_table without y/n

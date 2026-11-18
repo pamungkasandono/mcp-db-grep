@@ -1,6 +1,9 @@
 import asyncio
+import io
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import monitor
@@ -159,6 +162,112 @@ class TestMonitorApproval(unittest.TestCase):
         self.assertIn("A", monitor.auto_approved_sessions)
         self.assertNotIn("S27", monitor.auto_approved_sessions)
         self.assertIn("S28", monitor.auto_approved_sessions)
+
+    def test_read_recent_audit_history_empty_and_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_file = Path(tmpdir) / "audit.jsonl"
+            with patch.object(monitor, "AUDIT", missing_file):
+                self.assertEqual(monitor.read_recent_audit_history(limit=20), [])
+                self.assertEqual(monitor.read_recent_audit_history(limit=0), [])
+
+    def test_read_recent_audit_history_consolidates_and_parses(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audit_file = Path(tmpdir) / "audit.jsonl"
+            records = [
+                {"ts": "2026-11-18T10:00:00Z", "event": "list_databases", "count": 2, "databases": ["postgres:academic_portal", "mysql:orders"]},
+                {"ts": "2026-11-18T10:00:05Z", "event": "check_connection", "targets": ["all"], "count": 2},
+                {"ts": "2026-11-18T10:01:00Z", "event": "auto_allow", "tool": "list_tables", "db": "postgres:academic_portal", "reason": "auto_metadata = true"},
+                {"ts": "2026-11-18T10:02:00Z", "event": "denied", "reason": "monitor offline", "tool": "query", "db": "mysql:orders", "context": "orders · count", "sql": "SELECT count(*) FROM orders"},
+                {"ts": "2026-11-18T10:03:00Z", "event": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · find students", "sql": "SELECT * FROM students"},
+                {"ts": "2026-11-18T10:03:02Z", "event": "executed", "rows": 15, "ms": 4, "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · find students", "sql": "SELECT * FROM students"},
+            ]
+            audit_file.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+            with patch.object(monitor, "AUDIT", audit_file):
+                res = monitor.read_recent_audit_history(limit=10)
+                # Should have 5 records because request + executed are consolidated into executed
+                self.assertEqual(len(res), 5)
+                events = [r["event"] for r in res]
+                self.assertEqual(events, ["list_databases", "check_connection", "auto_allow", "denied", "executed"])
+                # The executed record preserved context and sql
+                exec_rec = res[-1]
+                self.assertEqual(exec_rec["context"], "academic_portal · find students")
+                self.assertEqual(exec_rec["rows"], 15)
+
+    def test_format_history_entry_badges(self):
+        denied_offline = {
+            "ts": "2026-11-18T10:02:00Z",
+            "event": "denied",
+            "reason": "monitor offline",
+            "tool": "query",
+            "db": "oracle:finance",
+            "context": "finance · quarterly",
+            "sql": "SELECT * FROM quarterly_revenue",
+        }
+        lines = monitor.format_history_entry(denied_offline)
+        joined = " ".join(lines)
+        self.assertIn("PAUSED-OFFLINE", joined)
+        self.assertIn("query @ oracle:finance", joined)
+        self.assertIn("SELECT * FROM quarterly_revenue", joined)
+        self.assertIn("paused because monitor was offline", joined)
+
+        exec_rec = {
+            "ts": "2026-11-18T10:03:00Z",
+            "event": "executed",
+            "tool": "query",
+            "db": "postgres:academic_portal",
+            "context": "academic_portal · find",
+            "sql": "SELECT * FROM students",
+            "rows": 12,
+            "ms": 5,
+        }
+        lines_exec = monitor.format_history_entry(exec_rec)
+        joined_exec = " ".join(lines_exec)
+        self.assertIn("EXECUTED", joined_exec)
+        self.assertIn("12 rows, 5 ms", joined_exec)
+
+    def test_render_history_and_live_banners(self):
+        stdout_buf = io.StringIO()
+        with patch("sys.stdout", stdout_buf):
+            monitor.render_history_banner([])
+            monitor.render_live_banner(48260, fallback=False)
+        output = stdout_buf.getvalue()
+        self.assertIn("RECENT ACTIVITY (BEFORE MONITOR OPENED)", output)
+        self.assertIn("No previous database activity", output)
+        self.assertIn("LIVE STREAM & APPROVAL BRIDGE ACTIVE", output)
+
+    def test_handle_event_streaming_live(self):
+        messages = [
+            {
+                "type": "event",
+                "tool": "check_connection",
+                "targets": ["all"],
+                "count": 1,
+                "results": [{"db": "postgres:academic_portal", "type": "postgres", "status": "connected", "latency_ms": 12}],
+            },
+            {
+                "type": "event",
+                "tool": "list_databases",
+                "count": 1,
+                "databases": ["postgres:academic_portal"],
+            },
+            {
+                "type": "event",
+                "tool": "check_config",
+                "valid": True,
+            },
+        ]
+        reader = FakeStreamReader(messages)
+        writer = FakeStreamWriter()
+        stdout_buf = io.StringIO()
+        with patch("sys.stdout", stdout_buf):
+            asyncio.run(monitor.handle(reader, writer))
+        out = stdout_buf.getvalue()
+        self.assertIn("check_connection", out)
+        self.assertIn("academic_portal", out)
+        self.assertIn("list_databases", out)
+        self.assertIn("check_config", out)
+        self.assertIn("VALID", out)
 
 
 if __name__ == "__main__":

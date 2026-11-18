@@ -7,6 +7,9 @@ PORT_RANGE_SIZE = 10
 
 CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
 STATE_PORT_FILE = CONFIG.parent / "monitor.port"
+AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
+
+DEFAULT_HISTORY_LIMIT = 20
 
 try:
     with open(CONFIG, "rb") as f:
@@ -15,6 +18,7 @@ except Exception:
     _cfg = {}
 PREFERRED_PORT = int(os.environ.get("MONITOR_PORT") or _cfg.get("monitor", {}).get("port", DEFAULT_PORT))
 PROMPT_TIMEOUT = int(os.environ.get("APPROVAL_TIMEOUT_S") or _cfg.get("monitor", {}).get("approval_timeout_s", 110))
+HISTORY_LIMIT = int(os.environ.get("MONITOR_HISTORY_LIMIT") or _cfg.get("monitor", {}).get("history_limit", DEFAULT_HISTORY_LIMIT))
 
 R, G, Y, D, N = "\033[31m", "\033[32m", "\033[33m", "\033[2m", "\033[0m"
 COLORS = ["\033[36m", "\033[35m", "\033[34m", "\033[92m", "\033[95m"]
@@ -365,6 +369,26 @@ async def handle(reader, writer):
                     ctx = clean(m.get("context") or m.get("konteks", ""))
                     print(f"{head} BLOCKED ({clean(m['reason'])}) ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
                     print_auto_approve_banner()
+
+            elif m["type"] == "event":
+                async with lock:
+                    tool = m.get("tool", "")
+                    if tool == "check_connection":
+                        targets = ", ".join(m.get("targets", []))
+                        print(f"{head} {D}(targets: {targets}){N} ━━")
+                        for r in m.get("results", []):
+                            icon = f"{G}✓{N}" if r.get("status") == "connected" else f"{R}✗{N}"
+                            lat = f"{r.get('latency_ms', 0)} ms"
+                            print(f"  {icon} {r.get('db', ''):<25} [{r.get('type', '')}] {r.get('status')} ({lat})")
+                    elif tool == "list_databases":
+                        dbs = ", ".join(m.get("databases", []))
+                        print(f"{head} {D}(found {m.get('count', 0)}: {dbs}){N} ━━")
+                    elif tool == "check_config":
+                        v_str = f"{G}VALID{N}" if m.get("valid") else f"{R}INVALID{N}"
+                        print(f"{head} [{v_str}] ━━")
+                    else:
+                        print(f"{head} ━━")
+                    print_auto_approve_banner()
     finally:
         if holding:
             lock.release()
@@ -394,7 +418,178 @@ def remove_state_port():
         pass
 
 
-async def main():
+def read_recent_audit_history(limit: int = DEFAULT_HISTORY_LIMIT) -> list[dict]:
+    if limit <= 0 or not AUDIT.exists():
+        return []
+    try:
+        with open(AUDIT, "r", encoding="utf-8", errors="replace") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size == 0:
+                return []
+            bytes_to_read = min(size, 512 * 1024)
+            f.seek(size - bytes_to_read)
+            chunk = f.read()
+            lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
+            if bytes_to_read < size and lines:
+                lines.pop(0)  # drop potentially incomplete first line
+
+            raw_records = []
+            for ln in lines:
+                try:
+                    raw_records.append(json.loads(ln))
+                except Exception:
+                    pass
+
+            consolidated = []
+            pending_requests = {}
+            for rec in raw_records:
+                evt = rec.get("event")
+                if evt == "request":
+                    key = (rec.get("session"), rec.get("db"), rec.get("sql"))
+                    pending_requests[key] = rec
+                elif evt in ("executed", "error", "denied"):
+                    key = (rec.get("session"), rec.get("db"), rec.get("sql"))
+                    req = pending_requests.pop(key, None)
+                    if req:
+                        for fld in ("context", "konteks", "tool", "sql", "db"):
+                            if not rec.get(fld) and req.get(fld):
+                                rec[fld] = req[fld]
+                    consolidated.append(rec)
+                elif evt in ("auto_allow", "blocked", "check_connection", "list_databases", "check_config"):
+                    consolidated.append(rec)
+
+            return consolidated[-limit:]
+    except Exception:
+        return []
+
+
+def format_history_entry(rec: dict) -> list[str]:
+    ts_raw = rec.get("ts", "")
+    try:
+        dt = datetime.fromisoformat(ts_raw).astimezone()
+        now = datetime.now().astimezone()
+        if dt.date() == now.date():
+            time_str = dt.strftime("%H:%M:%S")
+        else:
+            time_str = dt.strftime("%m-%d %H:%M")
+    except Exception:
+        time_str = ts_raw[11:19] if len(ts_raw) >= 19 else "??:??:??"
+
+    evt = rec.get("event")
+    tool = rec.get("tool", "")
+    db = rec.get("db", "")
+    db_disp = f" @ {db}" if db else ""
+    ctx = rec.get("context") or rec.get("konteks", "")
+    ctx_disp = f" · {ctx}" if ctx else ""
+
+    sql = clean(rec.get("sql", "")).strip()
+    sql_preview = " ".join(sql.split()) if sql else ""
+    if len(sql_preview) > 95:
+        sql_preview = sql_preview[:92] + "..."
+
+    lines = []
+    if evt == "denied":
+        reason = rec.get("reason", "")
+        if reason == "monitor offline":
+            badge = f"{R}[PAUSED-OFFLINE]{N}"
+            lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+            if sql_preview:
+                lines.append(f"             {D}SQL: {sql_preview}{N}")
+            lines.append(f"             ↳ {Y}AI query paused because monitor was offline.{N}")
+        elif reason == "user":
+            badge = f"{R}[REJECTED-BY-USER]{N}"
+            lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+            if sql_preview:
+                lines.append(f"             {D}SQL: {sql_preview}{N}")
+        else:
+            badge = f"{R}[DENIED: {reason}]{N}"
+            lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+            if sql_preview:
+                lines.append(f"             {D}SQL: {sql_preview}{N}")
+
+    elif evt == "executed":
+        badge = f"{G}[EXECUTED]{N}"
+        stats = f"{rec.get('rows', 0)} rows, {rec.get('ms', 0)} ms"
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp} {D}({stats}){N}{ctx_disp}")
+        if sql_preview:
+            lines.append(f"             {D}SQL: {sql_preview}{N}")
+
+    elif evt == "auto_allow":
+        badge = f"{G}[AUTO-ALLOW]{N}"
+        reason = rec.get("reason", "")
+        reason_disp = f" {D}({reason}){N}" if reason else ""
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp}{reason_disp}{ctx_disp}")
+        if sql_preview:
+            lines.append(f"             {D}SQL: {sql_preview}{N}")
+
+    elif evt == "error":
+        badge = f"{R}[DB-ERROR]{N}"
+        err = clean(rec.get("error", ""))[:80]
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+        lines.append(f"             {R}Error: {err}{N}")
+
+    elif evt == "blocked":
+        badge = f"{R}[BLOCKED]{N}"
+        reason = rec.get("reason", "")
+        reason_disp = f" {D}({reason}){N}" if reason else ""
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp}{reason_disp}{ctx_disp}")
+        if sql_preview:
+            lines.append(f"             {D}SQL: {sql_preview}{N}")
+
+    elif evt == "check_connection":
+        badge = f"{Y}[HEALTH-CHECK]{N}"
+        targets = ", ".join(rec.get("targets", []))
+        cnt = rec.get("count", len(rec.get("targets", [])))
+        lines.append(f"  {time_str}  {badge} check_connection {D}({cnt} targets: {targets}){N}")
+
+    elif evt == "list_databases":
+        badge = f"{Y}[METADATA]{N}"
+        cnt = rec.get("count", len(rec.get("databases", [])))
+        dbs_str = f": {', '.join(rec.get('databases', []))}" if rec.get("databases") else ""
+        lines.append(f"  {time_str}  {badge} list_databases {D}(found {cnt}{dbs_str}){N}")
+
+    elif evt == "check_config":
+        badge = f"{Y}[CONFIG-CHECK]{N}"
+        valid = rec.get("valid", True)
+        v_str = f"{G}VALID{N}" if valid else f"{R}INVALID{N}"
+        lines.append(f"  {time_str}  {badge} check_config [{v_str}]")
+
+    elif evt == "request":
+        badge = f"{Y}[PENDING]{N}"
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+        if sql_preview:
+            lines.append(f"             {D}SQL: {sql_preview}{N}")
+
+    else:
+        badge = f"{D}[{evt.upper()}]{N}"
+        lines.append(f"  {time_str}  {badge} {tool}{db_disp}{ctx_disp}")
+
+    return lines
+
+
+def render_history_banner(history: list[dict]):
+    print(f"\n{Y}╔════════════════════════════════════════════════════════════════════════════════════╗{N}")
+    print(f"{Y}║                   📜 RECENT ACTIVITY (BEFORE MONITOR OPENED)                  ║{N}")
+    print(f"{Y}╚════════════════════════════════════════════════════════════════════════════════════╝{N}")
+    if not history:
+        print(f"  {D}No previous database activity recorded in audit log.{N}")
+    else:
+        for rec in history:
+            for line in format_history_entry(rec):
+                print(line)
+    print(f"{D}──────────────────────────────────────────────────────────────────────────────────────{N}")
+
+
+def render_live_banner(bound_port: int, fallback: bool = False):
+    print(f" {G}🟢 LIVE STREAM & APPROVAL BRIDGE ACTIVE{N} {D}(127.0.0.1:{bound_port}){N}")
+    if fallback:
+        print(f" {Y}Note: Preferred port {PREFERRED_PORT} was busy. Fallback to {bound_port}.{N}")
+    print(f" {D}Waiting for incoming database actions from AI client...{N}")
+    print(f"{D}──────────────────────────────────────────────────────────────────────────────────────{N}\n", flush=True)
+
+
+async def main(history_limit: int | None = None):
     srv = None
     bound_port = None
     
@@ -418,9 +613,16 @@ async def main():
     # Overwrite / replace any previous or stale monitor.port
     write_state_port(bound_port)
 
-    if bound_port != PREFERRED_PORT:
-        print(f"{Y}Note: Preferred port {PREFERRED_PORT} was busy. Fallback to {bound_port}.{N}")
-    print(f"Monitor running on 127.0.0.1:{bound_port}. Waiting for client session...")
+    # Determine effective history limit
+    limit = HISTORY_LIMIT if history_limit is None else history_limit
+
+    # Phase 1: BEFORE (Recent History)
+    if limit > 0:
+        history = read_recent_audit_history(limit=limit)
+        render_history_banner(history)
+
+    # Phase 2: AFTER (Live Stream)
+    render_live_banner(bound_port, fallback=(bound_port != PREFERRED_PORT))
 
     kb_task = asyncio.create_task(keyboard_listener())
     try:
@@ -431,9 +633,9 @@ async def main():
         remove_state_port()
 
 
-def start():
+def start(history_limit: int | None = None):
     try:
-        asyncio.run(main())
+        asyncio.run(main(history_limit=history_limit))
     except KeyboardInterrupt:
         pass
     finally:

@@ -16,7 +16,7 @@ def get_current_version() -> str:
     try:
         return version("db-grep")
     except PackageNotFoundError:
-        return "0.4.0"
+        return "0.5.0"
 
 
 def parse_semver(ver_str: str) -> tuple[int, int, int]:
