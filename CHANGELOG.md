@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+- Multi-driver management via generic `--setup-driver [DRIVER]` CLI flag to inspect built-in drivers (`postgres`, `mysql`) and manage optional external client drivers (`oracle`).
+- Automated, self-contained Oracle Instant Client downloader and installer in user-space (`~/.config/db-grep/instantclient`), eliminating the need for `sudo`, OS-level packages, or system directory pollution.
+- Automatic Thick mode activation in `python-oracledb` for seamless support of legacy Oracle 10g password verifiers (`0x939` / `DPY-3015`) without modifying database passwords or configuration.
+- Interactive on-demand driver setup during `db-grep --check-connection` and `db-grep --init`: automatically offers to download missing drivers when a legacy 10g Oracle database is detected, and retries the connection check seamlessly.
+- Hardened archive extraction with Zip Slip protection and symlink traversal validation to prevent files from writing outside the target user directory.
+- Dynamic shared library resolution (`ctypes.util.find_library`) for Linux distributions (including Ubuntu 24.04+ `libaio.so.1t64` auto-symlink) and process-level in-place environment bootstrapping.
+- Dedicated unit and integration test suite covering driver lifecycle, security mitigations, and `DPY-3015` error wrapping (expanding test suite to 90 tests).
+
+### Changed
+- Centralized all driver metadata and alias mappings into `driver_manager.py` as a Single Source of Truth, reused by `config_manager.py` and `cli.py`.
+- Refactored CLI and server exception handling to catch targeted driver errors (`oracledb.Error`) and provide actionable hints for legacy Oracle authentication.
+
 ## [0.2.1] - 2026-11-13
 
 ### Fixed
