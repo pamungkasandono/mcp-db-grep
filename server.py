@@ -15,8 +15,9 @@ log = logging.getLogger("db-grep")
 CONFIG = Path(os.environ.get("DB_GREP_CONFIG", os.environ.get("DB_MCP_CONFIG", "~/.config/db-grep/config.toml"))).expanduser()
 AUDIT = Path(os.environ.get("AUDIT_LOG", CONFIG.parent / "audit.jsonl")).expanduser()
 
-Konteks = Annotated[str, Field(
+Context = Annotated[str, Field(
     description="Required. Format '<project-name> · <action>', example 'ecommerce · fetch product inventory'")]
+Konteks = Context
 DbName = Annotated[str, Field(description="Database connection name. See list_databases.")]
 
 KNOWN_DEFAULTS_KEYS = {"auto_metadata", "max_rows", "timeout_ms"}
@@ -858,17 +859,19 @@ def audit(event, **kw):
         f.write(json.dumps(rec, default=str) + "\n")
 
 
-def check_konteks(k):
+def check_context(k):
     k = re.sub(r"[\x00-\x1f\x7f]", "", k or "").strip()[:80]
     if "·" not in k:
-        raise ValueError("konteks must be in format '<project-name> · <action>', "
+        raise ValueError("context must be in format '<project-name> · <action>', "
                          "example 'ecommerce · fetch product inventory'")
     return k
 
+check_konteks = check_context
+
 
 # ---------- approval gate ----------
-async def execute(tool, d, konteks, sql, params=(), reject=None):
-    konteks = check_konteks(konteks)
+async def execute(tool, d, context, sql, params=(), reject=None):
+    context = check_context(context)
 
     # Evaluate auto-allow rules
     auto_metadata = d.cfg.get("auto_metadata", True)
@@ -900,16 +903,16 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             # Wait up to 25s if monitor is not running yet
             await link.ensure(timeout_sec=25)
         except (OSError, asyncio.TimeoutError):
-            audit("denied", reason="monitor offline", db=d.name, konteks=konteks, sql=sql)
+            audit("denied", reason="monitor offline", db=d.name, context=context, sql=sql)
             raise PermissionError(
                 f"MONITOR_OFFLINE: Approval monitor is not running.\n"
                 f"Target Database: {d.name}\n"
-                f"Requested Action: {konteks}\n"
+                f"Requested Action: {context}\n"
                 f"SQL: {sql}\n\n"
                 f"The database monitor (`db-grep --monitor`) must be opened in another terminal to review and approve this action."
             )
 
-        msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "konteks": konteks, "sql": sql}
+        msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "context": context, "sql": sql}
         if reject:
             await link.send({"type": "blocked", "reason": reject, **msg})
             audit("blocked", reason=reject)
@@ -919,7 +922,7 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
             audit("auto_allow", db=d.name, tool=tool, reason=auto_reason, sql=sql)
             await link.send({"type": "auto_allow", "reason": auto_reason, "params": params, **msg})
         else:
-            audit("request", db=d.name, db_type=d.cfg.get("type", ""), konteks=konteks, tool=tool, sql=sql, params=params)
+            audit("request", db=d.name, db_type=d.cfg.get("type", ""), context=context, tool=tool, sql=sql, params=params)
             await link.send({"type": "request", "params": params, **msg})
             line = await link.reader.readline()  # timeout is managed by monitor
             if not line:
@@ -932,7 +935,7 @@ async def execute(tool, d, konteks, sql, params=(), reject=None):
                 raise PermissionError(
                     f"ACTION_DENIED_BY_USER: Query was rejected by user in terminal monitor.\n"
                     f"SQL: {sql}\n"
-                    f"Context: {konteks}"
+                    f"Context: {context}"
                 )
             if resp.get("auto_session"):
                 audit("session_auto_approve", db=d.name, tool=tool, sql=sql)
@@ -1163,16 +1166,16 @@ async def list_databases() -> str:
 
 
 @mcp.tool()
-async def list_tables(db: DbName, konteks: Konteks, schema: str = "") -> str:
+async def list_tables(db: DbName, context: Context, schema: str = "") -> str:
     """List table and view names in a schema (default: connection default schema). Requires user approval."""
     d = get_db(db)
-    return await execute("list_tables", d, konteks, d.LIST_SQL, (schema or d.default_schema,))
+    return await execute("list_tables", d, context, d.LIST_SQL, (schema or d.default_schema,))
 
 
 @mcp.tool()
 async def find_objects(
     db: DbName,
-    konteks: Konteks,
+    context: Context,
     pattern: str,
     schema: str = "",
     object_type: str = "ALL",
@@ -1184,11 +1187,11 @@ async def find_objects(
     Recommended over list_tables for searching specific tables/views or exploring enterprise databases."""
     d = get_db(db)
     sql, params = d.get_search_query(pattern, schema=schema, object_type=object_type, limit=limit)
-    return await execute("find_objects", d, konteks, sql, params)
+    return await execute("find_objects", d, context, sql, params)
 
 
 @mcp.tool()
-async def describe_table(db: DbName, table: str, konteks: Konteks, schema: str = "") -> str:
+async def describe_table(db: DbName, table: str, context: Context, schema: str = "") -> str:
     """Columns, data types, and nullability of a table or view. Supports 'schema.table' format. Requires user approval."""
     d = get_db(db)
     table_clean = table.strip().strip('"').strip("'")
@@ -1198,15 +1201,15 @@ async def describe_table(db: DbName, table: str, konteks: Konteks, schema: str =
         target_schema = parts[0].strip().strip('"').strip("'")
         table_clean = parts[1].strip().strip('"').strip("'")
 
-    return await execute("describe_table", d, konteks, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
+    return await execute("describe_table", d, context, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
 
 
 @mcp.tool()
-async def query(db: DbName, sql: str, konteks: Konteks) -> str:
+async def query(db: DbName, sql: str, context: Context) -> str:
     """Execute read-only SELECT query, rows capped per connection. Requires user approval."""
     d = get_db(db)
     reject = None if sql.lstrip().lower().startswith(("select", "with")) else "only SELECT/WITH queries allowed"
-    return await execute("query", d, konteks, sql, (), reject)
+    return await execute("query", d, context, sql, (), reject)
 
 
 def start():

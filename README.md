@@ -60,7 +60,7 @@ timeout_ms = 10000
 # ── Format 1: Full DSN, raw credentials (ideal for local dev)
 [db.postgres.ecommerce-dev]
 description = "Development E-Commerce Database"
-dsn = "postgres://ro_user:rahasia@localhost:5432/ecommerce_dev"
+dsn = "postgres://ro_user:secret@localhost:5432/ecommerce_dev"
 auto_tables = ["mst_*", "ref_*", "app_configs"]
 
 # ── Format 2: DSN + credentials from environment (shorthand)

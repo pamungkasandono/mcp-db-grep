@@ -293,10 +293,11 @@ async def handle(reader, writer):
                 await lock.acquire()
                 holding = True
 
+                ctx = clean(m.get("context") or m.get("konteks", ""))
                 if name in auto_approved_sessions:
                     if db_short:
                         auto_approved_sessions[name] = db_short
-                    print(f"{head} {G}[AUTO-APPROVED: session {name}]{N} ━━{N}\n{D}{clean(m['konteks'])}{N}\n{clean(m['sql'])}")
+                    print(f"{head} {G}[AUTO-APPROVED: session {name}]{N} ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
                     if m.get("params"):
                         print(f"{D}params: {clean(m['params'])}{N}")
                     await reply(writer, {"approved": True, "auto_session": True})
@@ -304,7 +305,7 @@ async def handle(reader, writer):
                     prompt_active = True
                     try:
                         async with stdin_lock:
-                            print(f"{head} ━━{N}\n{D}{clean(m['konteks'])}{N}\n{clean(m['sql'])}")
+                            print(f"{head} ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
                             if m.get("params"):
                                 print(f"{D}params: {clean(m['params'])}{N}")
                             print("Allow? [y]es once / [a]uto-approve session / [n]o: ", end="", flush=True)
@@ -335,8 +336,9 @@ async def handle(reader, writer):
 
             elif m["type"] == "auto_allow":
                 async with lock:
+                    ctx = clean(m.get("context") or m.get("konteks", ""))
                     reason_str = f" {G}({clean(m.get('reason', 'auto_allow'))}){N}" if m.get("reason") else ""
-                    print(f"{head} {G}[AUTO-ALLOWED]{N} ━━{N}\n{D}{clean(m['konteks'])}{reason_str}{N}\n{clean(m['sql'])}")
+                    print(f"{head} {G}[AUTO-ALLOWED]{N} ━━{N}\n{D}{ctx}{reason_str}{N}\n{clean(m['sql'])}")
                     if m.get("params"):
                         print(f"{D}params: {clean(m['params'])}{N}")
 
@@ -360,7 +362,8 @@ async def handle(reader, writer):
 
             elif m["type"] == "blocked":
                 async with lock:
-                    print(f"{head} BLOCKED ({clean(m['reason'])}) ━━{N}\n{D}{clean(m['konteks'])}{N}\n{clean(m['sql'])}")
+                    ctx = clean(m.get("context") or m.get("konteks", ""))
+                    print(f"{head} BLOCKED ({clean(m['reason'])}) ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
                     print_auto_approve_banner()
     finally:
         if holding:

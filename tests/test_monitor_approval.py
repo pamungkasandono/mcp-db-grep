@@ -46,9 +46,9 @@ class TestMonitorApproval(unittest.TestCase):
 
     def test_approve_once_requires_prompt_on_next_query(self):
         messages = [
-            {"type": "request", "tool": "query", "db": "postgres:siakad", "konteks": "siakad · q1", "sql": "SELECT 1;", "params": ()},
+            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q1", "sql": "SELECT 1;", "params": ()},
             {"type": "result", "cols": ["1"], "rows": [[1]], "ms": 5, "limit": 100},
-            {"type": "request", "tool": "query", "db": "postgres:siakad", "konteks": "siakad · q2", "sql": "SELECT 2;", "params": ()},
+            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q2", "sql": "SELECT 2;", "params": ()},
         ]
         reader = FakeStreamReader(messages)
         writer = FakeStreamWriter()
@@ -66,11 +66,11 @@ class TestMonitorApproval(unittest.TestCase):
 
     def test_auto_approve_session_skips_subsequent_prompts_and_clears_on_disconnect(self):
         messages = [
-            {"type": "request", "tool": "query", "db": "postgres:siakad", "konteks": "siakad · q1", "sql": "SELECT 1;", "params": ()},
+            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q1", "sql": "SELECT 1;", "params": ()},
             {"type": "result", "cols": ["1"], "rows": [[1]], "ms": 3, "limit": 100},
-            {"type": "request", "tool": "query", "db": "postgres:siakad", "konteks": "siakad · q2", "sql": "SELECT 2;", "params": ()},
+            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q2", "sql": "SELECT 2;", "params": ()},
             {"type": "result", "cols": ["2"], "rows": [[2]], "ms": 4, "limit": 100},
-            {"type": "request", "tool": "query", "db": "postgres:siakad", "konteks": "siakad · q3", "sql": "SELECT 3;", "params": ()},
+            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q3", "sql": "SELECT 3;", "params": ()},
             {"type": "result", "cols": ["3"], "rows": [[3]], "ms": 2, "limit": 100},
         ]
         reader = FakeStreamReader(messages)
@@ -94,7 +94,7 @@ class TestMonitorApproval(unittest.TestCase):
         self.assertEqual(len(monitor.auto_approved_sessions), 0)
 
     def test_lock_single_session_instant(self):
-        monitor.auto_approved_sessions["A"] = "pgsql:siakad"
+        monitor.auto_approved_sessions["A"] = "pgsql:academic_portal"
         with patch.object(monitor, "getch") as mock_getch:
             asyncio.run(monitor.lock_sessions_interactive())
             # 1 active session locks immediately without calling getch
@@ -103,7 +103,7 @@ class TestMonitorApproval(unittest.TestCase):
 
     def test_lock_under_5_sessions_direct_letter_choice(self):
         monitor.auto_approved_sessions = {
-            "A": "pgsql:siakad",
+            "A": "pgsql:academic_portal",
             "B": "mysql:orders",
             "C": "ora:payroll",
         }
@@ -148,7 +148,7 @@ class TestMonitorApproval(unittest.TestCase):
 
     def test_lock_under_5_sessions_with_multichar_name_numeric_fallback(self):
         monitor.auto_approved_sessions = {
-            "A": "pgsql:siakad",
+            "A": "pgsql:academic_portal",
             "S27": "mysql:orders",
             "S28": "ora:payroll",
         }

@@ -22,11 +22,14 @@ class TestServerLogic(unittest.TestCase):
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    def test_check_konteks_valid(self):
+    def test_check_context_valid(self):
         valid = "my-project · fetch active users"
+        self.assertEqual(server.check_context(valid), valid)
         self.assertEqual(server.check_konteks(valid), valid)
 
-    def test_check_konteks_invalid_missing_separator(self):
+    def test_check_context_invalid_missing_separator(self):
+        with self.assertRaises(ValueError):
+            server.check_context("invalid context without middle dot")
         with self.assertRaises(ValueError):
             server.check_konteks("invalid context without middle dot")
 
