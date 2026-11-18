@@ -1,6 +1,6 @@
 import io
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import driver_manager
 
@@ -36,21 +36,37 @@ class TestDriverManager(unittest.TestCase):
             self.assertTrue(ora_installed["installed"])
             self.assertEqual(ora_installed["path"], "/tmp/oracle/client")
 
+    def test_is_driver_ready(self):
+        self.assertTrue(driver_manager.is_driver_ready("postgres"))
+        self.assertTrue(driver_manager.is_driver_ready("mysql"))
+        with patch("oracle_driver.is_driver_installed", return_value=True):
+            self.assertTrue(driver_manager.is_driver_ready("oracle"))
+        with patch("oracle_driver.is_driver_installed", return_value=False):
+            self.assertFalse(driver_manager.is_driver_ready("oracle"))
+
     def test_setup_driver_builtin_output(self):
         out = io.StringIO()
         with patch("sys.stdout", out):
-            driver_manager.setup_driver("postgres")
+            ok = driver_manager.setup_driver("postgres")
+        self.assertTrue(ok)
         self.assertIn("No external driver needed", out.getvalue())
 
     def test_setup_driver_status_all(self):
         out = io.StringIO()
         with patch("sys.stdout", out):
-            driver_manager.setup_driver(None)
+            ok = driver_manager.setup_driver(None)
+        self.assertTrue(ok)
         val = out.getvalue()
         self.assertIn("postgres", val)
         self.assertIn("mysql", val)
         self.assertIn("oracle", val)
-        self.assertIn("no external driver needed", val)
+
+    def test_setup_driver_unknown(self):
+        out = io.StringIO()
+        with patch("sys.stdout", out):
+            ok = driver_manager.setup_driver("unknown_driver_xyz")
+        self.assertFalse(ok)
+        self.assertIn("Unknown driver", out.getvalue())
 
 
 if __name__ == "__main__":

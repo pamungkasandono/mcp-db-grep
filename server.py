@@ -550,7 +550,7 @@ class Oracle(DB):
             else:
                 self.conn = oracledb.connect(dsn=dsn)
             self.conn.call_timeout = self.timeout_ms
-        except Exception as e:
+        except oracledb.Error as e:
             if "DPY-3015" in str(e):
                 raise oracledb.DatabaseError(
                     f"{e}\n"

@@ -7,7 +7,6 @@ Provides a uniform, semantic registry for inspecting and managing database drive
 - oracle: python-oracledb (Thin mode built-in; optional Instant Client for legacy 10g DBs)
 """
 
-import sys
 from pathlib import Path
 import oracle_driver
 
@@ -36,6 +35,18 @@ DRIVER_SPECS = {
     },
 }
 
+SUPPORTED_DRIVERS = tuple(DRIVER_SPECS.keys())
+DRIVER_ALIASES = {
+    alias: canonical
+    for canonical, spec in DRIVER_SPECS.items()
+    for alias in spec["aliases"]
+}
+DRIVER_SHORTHANDS = {
+    canonical: spec["aliases"][0]
+    for canonical, spec in DRIVER_SPECS.items()
+    if spec["aliases"]
+}
+
 
 def normalize_driver_name(name: str) -> str:
     low = (name or "").strip().lower()
@@ -43,6 +54,36 @@ def normalize_driver_name(name: str) -> str:
         if low == canonical or low in spec["aliases"]:
             return canonical
     return low
+
+
+def is_driver_ready(driver: str) -> bool:
+    canonical = normalize_driver_name(driver)
+    if canonical not in DRIVER_SPECS:
+        return False
+    spec = DRIVER_SPECS[canonical]
+    if not spec["needs_external"]:
+        return True
+    if canonical == "oracle":
+        return oracle_driver.is_driver_installed()
+    return True
+
+
+def install_driver(driver: str) -> bool:
+    canonical = normalize_driver_name(driver)
+    if canonical == "oracle":
+        try:
+            oracle_driver.download_and_install_driver()
+            oracle_driver.ensure_thick_mode()
+            return True
+        except Exception as e:
+            print(f"✗ Driver installation failed: {e}")
+            return False
+    return True
+
+
+def ensure_driver_env():
+    """Bootstrap OS library environment for external drivers before process initialization."""
+    oracle_driver.ensure_oracle_env()
 
 
 def get_driver_status(driver: str) -> dict:
@@ -58,7 +99,7 @@ def get_driver_status(driver: str) -> dict:
             "known": True,
             "ready": True,
             "needs_external": False,
-            "details": f"Ready (Built-in {spec['description']} - no external driver needed)",
+            "details": f"Built-in ready ({spec['description']} - no external driver needed)",
         }
 
     # Oracle
@@ -74,7 +115,7 @@ def get_driver_status(driver: str) -> dict:
                 "needs_external": True,
                 "installed": True,
                 "path": str(client_dir),
-                "details": f"Ready (Oracle Instant Client installed at: {client_dir})",
+                "details": f"Instant Client installed ({client_dir})",
             }
         else:
             return {
@@ -95,34 +136,31 @@ def print_all_driver_statuses():
     for key in DRIVER_SPECS:
         st = get_driver_status(key)
         name = st.get("name", key)
-        if not st.get("needs_external"):
-            print(f"  ✓ {key:<10} [{name}]: Built-in ready (no external driver needed)")
-        else:
-            if st.get("installed"):
-                print(f"  ✓ {key:<10} [{name}]: Instant Client installed ({st['path']})")
-            else:
-                print(f"  ○ {key:<10} [{name}]: Thin mode active (run 'db-grep --setup-driver {key}' for legacy 10g support)")
+        prefix = "✓" if (not st.get("needs_external") or st.get("installed")) else "○"
+        print(f"  {prefix} {key:<10} [{name}]: {st['details']}")
     print()
 
 
-def setup_driver(driver_arg: str | None = None):
-    """Entry point for db-grep --setup-driver [DRIVER]."""
+def setup_driver(driver_arg: str | None = None) -> bool:
+    """Entry point for db-grep --setup-driver [DRIVER]. Returns True on success, False on error."""
     if not driver_arg or driver_arg in ("status", "list", "all"):
         print_all_driver_statuses()
-        return
+        return True
 
     canonical = normalize_driver_name(driver_arg)
     if canonical not in DRIVER_SPECS:
         print(f"Error: Unknown driver '{driver_arg}'.")
         print(f"Supported drivers: {', '.join(DRIVER_SPECS.keys())}")
-        sys.exit(1)
+        return False
 
     spec = DRIVER_SPECS[canonical]
     if not spec["needs_external"]:
         print(f"\n[{canonical}] {spec['name']}")
         print(f"  Status: Built-in ({spec['description']})")
         print("  Notice: No external driver needed. It works out-of-the-box.\n")
-        return
+        return True
 
     if canonical == "oracle":
-        oracle_driver.setup_oracle_driver_cli()
+        return oracle_driver.setup_oracle_driver_cli()
+
+    return True

@@ -85,6 +85,17 @@ def run_check_config_cli():
         sys.exit(1)
 
 
+def _print_connection_results(results: list[dict]) -> bool:
+    has_failure = False
+    for res in results:
+        if res["status"] == "connected":
+            print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
+        else:
+            has_failure = True
+            print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
+    return has_failure
+
+
 def run_check_connection_cli(targets: list[str] | str):
     import server
 
@@ -134,37 +145,23 @@ def run_check_connection_cli(targets: list[str] | str):
 
     results = server.execute_connection_check(target_list, all_dbs=all_dbs)
     print(f"\nChecking {len(results)} database connection(s)...")
-    has_failure = False
-
-    for res in results:
-        if res["status"] == "connected":
-            print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
-        else:
-            has_failure = True
-            print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
+    has_failure = _print_connection_results(results)
 
     failed_legacy_oracle = [
         res["db"] for res in results
         if res["status"] != "connected" and "DPY-3015" in (res.get("error") or "")
     ]
     if failed_legacy_oracle and sys.stdin.isatty():
-        import oracle_driver
-        if not oracle_driver.is_driver_installed():
+        import driver_manager
+        if not driver_manager.is_driver_ready("oracle"):
             print("\n[!] Oracle database requires legacy 10g client driver.")
             try:
                 ans = input("Would you like db-grep to download the Oracle Instant Client driver now? [Y/n]: ").strip().lower()
                 if ans in ("", "y", "yes"):
-                    oracle_driver.download_and_install_driver()
-                    oracle_driver.ensure_thick_mode()
-                    print("\nRe-testing Oracle connections...")
-                    retry_results = server.execute_connection_check(failed_legacy_oracle, all_dbs=all_dbs)
-                    has_failure = False
-                    for res in retry_results:
-                        if res["status"] == "connected":
-                            print(f"  ✓ {res['db']:<25} [{res['type']}] Connected ({res['latency_ms']} ms) - Query: '{res['query']}'")
-                        else:
-                            has_failure = True
-                            print(f"  ✗ {res['db']:<25} [{res['type']}] Failed - Query: '{res['query']}'\n     Error: {res['error']}")
+                    if driver_manager.install_driver("oracle"):
+                        print("\nRe-testing Oracle connections...")
+                        retry_results = server.execute_connection_check(failed_legacy_oracle, all_dbs=all_dbs)
+                        has_failure = _print_connection_results(retry_results)
             except (KeyboardInterrupt, EOFError):
                 pass
 
@@ -173,8 +170,8 @@ def run_check_connection_cli(targets: list[str] | str):
 
 
 def main():
-    import oracle_driver
-    oracle_driver.ensure_oracle_env()
+    import driver_manager
+    driver_manager.ensure_driver_env()
 
     parser = argparse.ArgumentParser(
         prog="db-grep",
@@ -326,7 +323,9 @@ def main():
         updater.execute_upgrade()
     elif args.setup_driver is not None:
         import driver_manager
-        driver_manager.setup_driver(args.setup_driver)
+        ok = driver_manager.setup_driver(args.setup_driver)
+        if not ok:
+            sys.exit(1)
     else:
         print(f"db-grep v{__version__}\n")
         parser.print_help()

@@ -106,8 +106,7 @@ def save_config_lines(lines: list[str]):
         CONFIG.chmod(0o600)
 
 
-DRIVER_ALIASES = {"pgsql": "postgres", "ora": "oracle", "my": "mysql"}
-DRIVER_SHORTHANDS = {v: k for k, v in DRIVER_ALIASES.items()}
+from driver_manager import DRIVER_ALIASES, DRIVER_SHORTHANDS, SUPPORTED_DRIVERS
 
 
 def normalize_db_token(token: str) -> str:
@@ -238,7 +237,6 @@ def delete_entry(target: str, confirm: bool = True) -> bool:
     return True
 
 
-SUPPORTED_DRIVERS = ("postgres", "oracle", "mysql")
 DEFAULT_DSNS = {
     "postgres": "postgres://ro_user:password@localhost:5432/dbname",
     "oracle": "localhost:1521/ORCL",

@@ -58,15 +58,12 @@ def is_driver_installed() -> bool:
     return find_oracle_client_dir() is not None
 
 
-_THICK_MODE_INITIALIZED = False
-
-
 def _auto_resolve_libaio(client_dir: Path):
     """
     On Ubuntu 24.04+ / Debian 13+, libaio was renamed to libaio.so.1t64 (time64 transition).
     Oracle Instant Client looks for libaio.so.1.
-    If libaio.so.1 is missing in the system or client directory, automatically create a local
-    symlink inside the user's client directory pointing to the system's libaio.so.1t64.
+    If libaio.so.1 is missing in the system or client directory, dynamically resolve the system's
+    libaio using ctypes.util.find_library and create a local symlink inside the user's client directory.
     """
     if not sys.platform.startswith("linux"):
         return
@@ -75,21 +72,43 @@ def _auto_resolve_libaio(client_dir: Path):
     if local_libaio.exists():
         return
 
-    candidates = [
-        Path("/usr/lib/x86_64-linux-gnu/libaio.so.1t64"),
-        Path("/usr/lib/aarch64-linux-gnu/libaio.so.1t64"),
-        Path("/lib/x86_64-linux-gnu/libaio.so.1t64"),
-        Path("/lib/aarch64-linux-gnu/libaio.so.1t64"),
-        Path("/usr/lib64/libaio.so.1"),
-        Path("/usr/lib/libaio.so.1"),
+    import ctypes.util
+
+    # 1. Search dynamically using ctypes.util.find_library
+    candidates = []
+    found_name = ctypes.util.find_library("aio")
+    if found_name:
+        candidates.append(found_name)
+    candidates.extend(["libaio.so.1t64", "libaio.so.1"])
+
+    search_dirs = [
+        Path("/usr/lib/x86_64-linux-gnu"),
+        Path("/usr/lib/aarch64-linux-gnu"),
+        Path("/lib/x86_64-linux-gnu"),
+        Path("/lib/aarch64-linux-gnu"),
+        Path("/usr/lib64"),
+        Path("/usr/lib"),
+        Path("/lib64"),
+        Path("/lib"),
     ]
-    for cand in candidates:
-        if cand.exists():
+
+    for cand_name in candidates:
+        cand_p = Path(cand_name)
+        if cand_p.is_absolute() and cand_p.exists():
             try:
-                local_libaio.symlink_to(cand)
-                break
+                local_libaio.symlink_to(cand_p)
+                return
             except Exception:
                 pass
+
+        for s_dir in search_dirs:
+            full_path = s_dir / cand_name
+            if full_path.exists():
+                try:
+                    local_libaio.symlink_to(full_path)
+                    return
+                except Exception:
+                    pass
 
 
 def _fix_extracted_symlinks(client_dir: Path):
@@ -163,15 +182,14 @@ def ensure_thick_mode() -> bool:
     Attempts to initialize python-oracledb in Thick mode if a local or system
     Oracle Instant Client is available. Returns True if Thick mode is active.
     """
-    global _THICK_MODE_INITIALIZED
-    if _THICK_MODE_INITIALIZED:
+    import oracledb
+
+    if not oracledb.is_thin_mode():
         return True
 
     client_dir = find_oracle_client_dir()
     if not client_dir:
         return False
-
-    import oracledb
 
     client_dir_str = str(client_dir)
     _fix_extracted_symlinks(client_dir)
@@ -179,10 +197,8 @@ def ensure_thick_mode() -> bool:
 
     try:
         oracledb.init_oracle_client(lib_dir=client_dir_str)
-        _THICK_MODE_INITIALIZED = True
         return True
     except oracledb.ProgrammingError:
-        _THICK_MODE_INITIALIZED = True
         return True
     except Exception as e:
         sys.stderr.write(f"[db-grep] Warning: Failed to init Oracle client from {client_dir}: {e}\n")
@@ -307,7 +323,7 @@ def download_and_install_driver() -> Path:
     return found
 
 
-def setup_oracle_driver_cli():
+def setup_oracle_driver_cli() -> bool:
     """CLI handler for Oracle driver setup via db-grep --setup-driver oracle."""
     print("--- db-grep Oracle Instant Client Setup ---")
     current = find_oracle_client_dir()
@@ -319,15 +335,16 @@ def setup_oracle_driver_cli():
             ans = input("\nDo you want to re-download and re-install? [y/N]: ").strip().lower()
             if ans not in ("y", "yes"):
                 print("Aborted.")
-                return
+                return True
         except (KeyboardInterrupt, EOFError):
             print("\nAborted.")
-            return
+            return False
 
     try:
         download_and_install_driver()
         print("✓ Oracle Instant Client setup completed successfully.")
         print("  Legacy (10g) Oracle databases can now connect seamlessly.")
+        return True
     except Exception as e:
         print(f"✗ Setup failed: {e}")
-        sys.exit(1)
+        return False

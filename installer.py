@@ -526,8 +526,8 @@ def run_init(target_harness: str = None):
 
     # Check if Oracle is configured and driver is missing
     try:
-        import oracle_driver
-        if not oracle_driver.is_driver_installed() and sys.stdin.isatty():
+        import driver_manager
+        if not driver_manager.is_driver_ready("oracle") and sys.stdin.isatty():
             import tomllib
             if config_file.exists():
                 cfg_data = tomllib.loads(config_file.read_text(encoding="utf-8"))
@@ -540,8 +540,8 @@ def run_init(target_harness: str = None):
                     try:
                         ans = input("Would you like to install the Oracle Instant Client driver now for legacy 10g support? [Y/n]: ").strip().lower()
                         if ans in ("", "y", "yes"):
-                            oracle_driver.download_and_install_driver()
+                            driver_manager.install_driver("oracle")
                     except (KeyboardInterrupt, EOFError):
                         pass
-    except Exception:
+    except (ImportError, OSError, tomllib.TOMLDecodeError):
         pass
