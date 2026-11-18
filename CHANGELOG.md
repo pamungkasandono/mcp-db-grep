@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-18
+
+### Added
+- Added `find_objects` MCP tool for fast, server-side pattern and keyword searches across database objects (`TABLE`, `VIEW`, `SYNONYM`, `MATERIALIZED VIEW`) across all accessible schemas without cap-limit truncation.
+- Intelligent pattern formatting: automatically wraps unadorned search terms in `%...%`, maps glob `*` wildcards to `%`, and preserves user-specified wildcards (`%`).
+- Multi-dialect search query adapters:
+  - **Oracle (`ora`)**: Queries `ALL_OBJECTS` with automatic exclusion of internal system schemas (`SYS`, `SYSTEM`, etc.) and universal backward-compatible row pagination (`ROWNUM`).
+  - **PostgreSQL (`pg`)**: Case-insensitive filtering on `information_schema.tables`, excluding system catalogs (`pg_catalog`, `information_schema`).
+  - **MySQL (`my`)**: Searches `information_schema.tables`, excluding internal system schemas (`mysql`, `performance_schema`, `information_schema`, `sys`).
+- Extended Oracle `list_tables` to include `VIEW` objects via `UNION` with `ALL_VIEWS`.
+- Added automatic synonym resolution to Oracle `describe_table` via `ALL_SYNONYMS`.
+- Added automatic `schema.table` parsing and quote stripping in `describe_table`.
+- Included `find_objects` under the default `auto_metadata = true` auto-approval rule.
+
+### Changed
+- **Standardization**: Refactored the core MCP parameter and payload name from `konteks` to standard English `context` (`Context = Annotated[...]`), while maintaining backward compatibility aliases (`Konteks = Context`, `check_konteks = check_context`).
+- Standardized sample DSN passwords (`rahasia` → `secret`) and dummy database names across documentation, templates, and test fixtures to standard English terminology.
+
 ## [0.3.1] - 2026-11-18
 
 ### Fixed
