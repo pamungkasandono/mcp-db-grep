@@ -576,13 +576,14 @@ def run_interactive_dashboard():
         print("\nActions:")
         print("  [1-N] Toggle active/disabled")
         print("  [a]   Add new database")
+        print("  [c]   Check / validate configuration")
         print("  [d]   Delete database")
         if has_legacy:
             print("  [m]   Migrate legacy config to v0.8.0")
         print("  [v]   Open in editor / view raw")
         print("  [q]   Quit")
 
-        prompt_opts = "1-N, a, d, m, v, q" if has_legacy else "1-N, a, d, v, q"
+        prompt_opts = "1-N, a, c, d, m, v, q" if has_legacy else "1-N, a, c, d, v, q"
         try:
             choice = input(f"\nSelect option [{prompt_opts}]: ").strip().lower()
         except (KeyboardInterrupt, EOFError):
@@ -600,6 +601,13 @@ def run_interactive_dashboard():
                 print("Invalid number selection.")
         elif choice == "a":
             prompt_add_interactive()
+        elif choice == "c":
+            from cli import run_check_config_cli
+            run_check_config_cli(exit_on_complete=False)
+            try:
+                input("\nPress Enter to return to menu...")
+            except (KeyboardInterrupt, EOFError):
+                pass
         elif choice == "d":
             target_in = input("Number or key of database to delete: ").strip()
             if target_in.isdigit():

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CLI Help & Subcommand Discoverability UX**:
+  - Aligned command shorthands to the front (`[s] server`, `[m] monitor`, `[p] ping`, `[c] config`, `[i] install`, `[u] update`, `[d] driver`) in root `--help` for uniform visual scanning.
+  - Added interactive `[c] Check / validate configuration` action directly into the `db-grep config` dashboard menu.
+  - Enhanced `db-grep config --help` with full descriptions of all subcommands (`check`, `list`, `add`, `migrate`, `edit`, `disable`, `enable`, `delete`) and practical copy-paste examples.
+
 ### Fixed
 - **Tag-Based Changelog Resolution**: Switched `fetch_multi_version_changelog` to query release tag snapshots (`/v<tag>/CHANGELOG.md`) before falling back to `main`. Bypasses Fastly CDN 5-minute caching on GitHub raw branch URLs and ensures newly published releases are never omitted when updating across version jumps.
 

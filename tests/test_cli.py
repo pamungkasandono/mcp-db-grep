@@ -25,13 +25,13 @@ class TestCli(unittest.TestCase):
     def test_help_flag(self):
         res = self.run_cli(["--help"])
         self.assertEqual(res.returncode, 0)
-        self.assertIn("server (s)", res.stdout)
-        self.assertIn("monitor (m)", res.stdout)
-        self.assertIn("ping (p)", res.stdout)
-        self.assertIn("config (c)", res.stdout)
-        self.assertIn("install (i)", res.stdout)
-        self.assertIn("update (u)", res.stdout)
-        self.assertIn("driver (d)", res.stdout)
+        self.assertIn("[s] server", res.stdout)
+        self.assertIn("[m] monitor", res.stdout)
+        self.assertIn("[p] ping", res.stdout)
+        self.assertIn("[c] config", res.stdout)
+        self.assertIn("[i] install", res.stdout)
+        self.assertIn("[u] update", res.stdout)
+        self.assertIn("[d] driver", res.stdout)
 
     def test_subcommand_helps(self):
         res_inst = self.run_cli(["install", "--help"])
@@ -45,6 +45,9 @@ class TestCli(unittest.TestCase):
         res_cfg = self.run_cli(["config", "--help"])
         self.assertEqual(res_cfg.returncode, 0)
         self.assertIn("config [-h] [-y] [ACTION ...]", res_cfg.stdout)
+        self.assertIn("check", res_cfg.stdout)
+        self.assertIn("migrate", res_cfg.stdout)
+        self.assertIn("subcommands:", res_cfg.stdout)
 
         res_ping = self.run_cli(["ping", "--help"])
         self.assertEqual(res_ping.returncode, 0)

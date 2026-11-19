@@ -42,7 +42,7 @@ def parse_selection_tokens(user_input: str, total_items: int) -> list[int]:
     return result
 
 
-def run_check_config_cli():
+def run_check_config_cli(exit_on_complete: bool = True) -> bool:
     import server
     report = server.inspect_config()
 
@@ -85,7 +85,9 @@ def run_check_config_cli():
 
     if report["valid"]:
         print("\nResult: Configuration is VALID.\n")
-        sys.exit(0)
+        if exit_on_complete:
+            sys.exit(0)
+        return True
     else:
         print("\nResult: Configuration is INVALID. Please correct the errors above.")
         import config_manager
@@ -97,7 +99,9 @@ def run_check_config_cli():
             except Exception:
                 pass
         print()
-        sys.exit(1)
+        if exit_on_complete:
+            sys.exit(1)
+        return False
 
 
 def _print_connection_results(results: list[dict]) -> bool:
@@ -272,7 +276,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg = subparsers.add_parser(
         "config",
         aliases=["c"],
-        help="Manage databases in config.toml (subcommands: list, add, check, migrate, edit, disable, enable, delete)",
+        help="Manage databases in config.toml (subcommands: list, check, add, migrate, edit, disable, enable, delete)",
+        description="Manage databases and access controls in config.toml. Omit subcommand to open the interactive dashboard.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+subcommands:
+  check               Validate configuration syntax, file permissions, and access rules
+  list (ls)           List all active and disabled databases
+  add                 Add a new database connection interactively
+  migrate             Auto-upgrade legacy config.toml keys to modern format
+  edit (view)         Open config.toml in default editor (Notepad / nano)
+  disable <DB> [MSG]  Temporarily disable a database (with optional maintenance reason)
+  enable <DB>         Re-enable a disabled database
+  delete <DB>         Delete a database entry permanently
+
+examples:
+  db-grep config               # Open interactive dashboard
+  db-grep config check         # Validate config.toml
+  db-grep config list          # List configured databases
+  db-grep config add           # Interactive wizard to add a DB
+  db-grep config migrate -y    # Upgrade legacy config without prompt
+  db-grep config disable prod  # Temporarily disable 'prod'
+""",
     )
     p_cfg.add_argument(
         "-y",
@@ -285,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
         "action",
         nargs="*",
         metavar="ACTION",
-        help="Config subcommand (omit for interactive dashboard)",
+        help="Config subcommand (check, list, add, migrate, edit, disable, enable, delete)",
     )
 
     # install (aliases: i)
@@ -344,6 +369,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DRIVER",
         help="Driver name (e.g. 'oracle') or omit to show status",
     )
+
+    # Format subcommands as "[alias] name" for clean, uniform alignment
+    for action in parser._actions:
+        if hasattr(action, "_choices_actions"):
+            for subaction in action._choices_actions:
+                import re
+                m = re.match(r"^([a-z]+) \(([a-z]+)\)$", subaction.metavar or "")
+                if m:
+                    subaction.metavar = f"[{m.group(2)}] {m.group(1)}"
 
     return parser
 
