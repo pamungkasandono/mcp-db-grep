@@ -5,6 +5,18 @@ import updater
 
 
 class TestUpdater(unittest.TestCase):
+    def test_get_current_version_reads_pyproject_ssot(self):
+        ver = updater.get_current_version()
+        self.assertEqual(ver, "0.5.1")
+
+    def test_get_current_version_fallback_package_or_zero(self):
+        with patch.object(updater, "Path") as mock_path:
+            mock_path.return_value.resolve.return_value.parent.__truediv__.return_value.exists.return_value = False
+            with patch("updater.version", return_value="1.2.3"):
+                self.assertEqual(updater.get_current_version(), "1.2.3")
+            with patch("updater.version", side_effect=updater.PackageNotFoundError):
+                self.assertEqual(updater.get_current_version(), "0.0.0")
+
     def test_parse_semver(self):
         self.assertEqual(updater.parse_semver("0.1.0"), (0, 1, 0))
         self.assertEqual(updater.parse_semver("v0.1.2"), (0, 1, 2))

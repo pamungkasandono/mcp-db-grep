@@ -6,9 +6,11 @@ import signal
 import subprocess
 import sys
 import textwrap
+import tomllib
 import urllib.error
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 GITHUB_REPO = "pamungkasandono/mcp-db-grep"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -17,10 +19,22 @@ GIT_INSTALL_URL = f"git+https://github.com/{GITHUB_REPO}.git"
 
 
 def get_current_version() -> str:
+    # 1. In source checkout / development, pyproject.toml is the Single Source of Truth
+    pyproject = Path(__file__).resolve().parent / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            with open(pyproject, "rb") as f:
+                ver = tomllib.load(f).get("project", {}).get("version")
+                if ver:
+                    return str(ver)
+        except Exception:
+            pass
+
+    # 2. When installed as package (wheel / site-packages)
     try:
         return version("db-grep")
     except PackageNotFoundError:
-        return "0.5.1"
+        return "0.0.0"
 
 
 def parse_semver(ver_str: str) -> tuple[int, int, int]:
