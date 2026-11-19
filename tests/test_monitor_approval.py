@@ -67,34 +67,54 @@ class TestMonitorApproval(unittest.TestCase):
         self.assertEqual(writer.written[2], {"approved": False, "auto_session": False})
         self.assertEqual(len(keys), 0)
 
-    def test_auto_approve_session_skips_subsequent_prompts_and_clears_on_disconnect(self):
+    def test_always_allow_table_returns_add_auto_tables(self):
         messages = [
-            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q1", "sql": "SELECT 1;", "params": ()},
-            {"type": "result", "cols": ["1"], "rows": [[1]], "ms": 3, "limit": 100},
-            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q2", "sql": "SELECT 2;", "params": ()},
-            {"type": "result", "cols": ["2"], "rows": [[2]], "ms": 4, "limit": 100},
-            {"type": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · q3", "sql": "SELECT 3;", "params": ()},
-            {"type": "result", "cols": ["3"], "rows": [[3]], "ms": 2, "limit": 100},
+            {
+                "type": "request",
+                "tool": "query",
+                "db": "postgres:academic_portal",
+                "context": "academic_portal · q1",
+                "sql": "SELECT * FROM students;",
+                "params": (),
+                "tables": ["students"],
+                "can_auto_allow": True,
+                "candidate_tables": ["students"],
+            },
         ]
         reader = FakeStreamReader(messages)
         writer = FakeStreamWriter()
 
-        getch_calls = []
-
-        def fake_getch(_t):
-            getch_calls.append(1)
-            return "a"
-
-        with patch.object(monitor, "getch", side_effect=fake_getch):
+        with patch.object(monitor, "getch", return_value="a"):
             asyncio.run(monitor.handle(reader, writer))
 
-        # getch was only called ONCE for the first query; q2 and q3 were auto-approved
-        self.assertEqual(len(getch_calls), 1)
-        self.assertEqual(writer.written[1], {"approved": True, "auto_session": True})
-        self.assertEqual(writer.written[2], {"approved": True, "auto_session": True})
-        self.assertEqual(writer.written[3], {"approved": True, "auto_session": True})
-        # Cleaned up automatically when session disconnects
-        self.assertEqual(len(monitor.auto_approved_sessions), 0)
+        self.assertEqual(
+            writer.written[1],
+            {"approved": True, "auto_session": False, "add_auto_tables": ["students"]},
+        )
+
+    def test_always_allow_rejected_when_sensitive_data_present(self):
+        messages = [
+            {
+                "type": "request",
+                "tool": "query",
+                "db": "postgres:academic_portal",
+                "context": "academic_portal · q1",
+                "sql": "SELECT salary_amount FROM pegawai;",
+                "params": (),
+                "tables": ["pegawai"],
+                "columns": ["salary_amount"],
+                "can_auto_allow": False,
+                "trigger_reason": "sensitive column(s): salary_amount",
+            },
+        ]
+        reader = FakeStreamReader(messages)
+        writer = FakeStreamWriter()
+
+        # Pressing 'a' on sensitive query must deny it
+        with patch.object(monitor, "getch", return_value="a"):
+            asyncio.run(monitor.handle(reader, writer))
+
+        self.assertEqual(writer.written[1], {"approved": False, "auto_session": False})
 
     def test_lock_single_session_instant(self):
         monitor.auto_approved_sessions["A"] = "pgsql:academic_portal"

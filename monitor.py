@@ -298,45 +298,64 @@ async def handle(reader, writer):
                 holding = True
 
                 ctx = clean(m.get("context") or m.get("konteks", ""))
-                if name in auto_approved_sessions:
-                    if db_short:
-                        auto_approved_sessions[name] = db_short
-                    print(f"{head} {G}[AUTO-APPROVED: session {name}]{N} ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
-                    if m.get("params"):
-                        print(f"{D}params: {clean(m['params'])}{N}")
-                    await reply(writer, {"approved": True, "auto_session": True})
+                tables = m.get("tables", [])
+                columns = m.get("columns", [])
+                trigger_reason = m.get("trigger_reason")
+                can_auto_allow = m.get("can_auto_allow", True)
+                candidate_tables = m.get("candidate_tables", [])
+
+                prompt_active = True
+                try:
+                    async with stdin_lock:
+                        print(f"{head} ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
+                        if m.get("params"):
+                            print(f"{D}params: {clean(m['params'])}{N}")
+                        if tables:
+                            print(f"{D}Tables  : {', '.join(tables)}{N}")
+                        if columns:
+                            col_summary = ", ".join(columns[:10]) + ("..." if len(columns) > 10 else "")
+                            print(f"{D}Columns : {col_summary}{N}")
+                        if trigger_reason:
+                            reason_color = R if not can_auto_allow else Y
+                            print(f"{reason_color}Reason  : {trigger_reason}{N}")
+
+                        if can_auto_allow and candidate_tables:
+                            cand_label = f"'{candidate_tables[0]}'" if len(candidate_tables) == 1 else f"{len(candidate_tables)} table(s)"
+                            prompt_str = f"Allow? [y]es once / [a]lways allow {cand_label} / [n]o: "
+                        elif not can_auto_allow:
+                            prompt_str = "Allow? [y]es once / [n]o (auto-allow disabled: sensitive data): "
+                        else:
+                            prompt_str = "Allow? [y]es once / [n]o: "
+
+                        print(prompt_str, end="", flush=True)
+                        key = await asyncio.to_thread(getch, PROMPT_TIMEOUT)
+                finally:
+                    prompt_active = False
+
+                k_low = key.lower() if key is not None else ""
+                add_tables = []
+                if k_low == "y":
+                    ok = True
+                    print(f"{G}allowed (once){N}")
+                elif k_low == "a" and can_auto_allow and candidate_tables:
+                    ok = True
+                    add_tables = candidate_tables
+                    cand_label = f"'{candidate_tables[0]}'" if len(candidate_tables) == 1 else f"{len(candidate_tables)} table(s)"
+                    print(f"{G}allowed and added {cand_label} to auto_tables in config.toml{N}")
+                elif k_low == "a" and not can_auto_allow:
+                    ok = False
+                    print(f"{R}denied (cannot auto-allow sensitive tables or columns){N}")
                 else:
-                    prompt_active = True
-                    try:
-                        async with stdin_lock:
-                            print(f"{head} ━━{N}\n{D}{ctx}{N}\n{clean(m['sql'])}")
-                            if m.get("params"):
-                                print(f"{D}params: {clean(m['params'])}{N}")
-                            print("Allow? [y]es once / [a]uto-approve session / [n]o: ", end="", flush=True)
-                            key = await asyncio.to_thread(getch, PROMPT_TIMEOUT)
-                    finally:
-                        prompt_active = False
+                    ok = False
+                    print(f"{R}{'timeout' if key is None else 'denied'}{N}")
 
-                    k_low = key.lower() if key is not None else ""
-                    if k_low == "y":
-                        ok = True
-                        auto_sess = False
-                        print(f"{G}allowed (once){N}")
-                    elif k_low == "a":
-                        ok = True
-                        auto_sess = True
-                        auto_approved_sessions[name] = db_short
-                        print(f"{G}auto-approve enabled for {t} (press 'l' anytime to lock){N}")
-                    else:
-                        ok = False
-                        auto_sess = False
-                        print(f"{R}{'timeout' if key is None else 'denied'}{N}")
-
-                    await reply(writer, {"approved": ok, "auto_session": auto_sess})
-                    if not ok:
-                        print_auto_approve_banner()
-                        lock.release()
-                        holding = False
+                resp_payload = {"approved": ok, "auto_session": False}
+                if add_tables and ok:
+                    resp_payload["add_auto_tables"] = add_tables
+                await reply(writer, resp_payload)
+                if not ok:
+                    lock.release()
+                    holding = False
 
             elif m["type"] == "auto_allow":
                 async with lock:

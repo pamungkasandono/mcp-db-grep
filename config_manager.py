@@ -43,7 +43,7 @@ def ensure_config_exists() -> Path:
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
             CONFIG.parent.chmod(0o700)
-        CONFIG.write_text("[monitor]\nport = 48260\n\n[defaults]\nauto_metadata = true\n\n", encoding="utf-8")
+        CONFIG.write_text("[monitor]\nport = 48260\n\n[defaults]\nread_metadata = true\nread_data = false\n\n", encoding="utf-8")
         if os.name == "posix":
             CONFIG.chmod(0o600)
     return CONFIG
@@ -234,6 +234,54 @@ def delete_entry(target: str, confirm: bool = True) -> bool:
 
     save_config_lines(raw_lines[: entry.start_line] + raw_lines[entry.end_line :])
     print(f"✓ Deleted [{entry.key}] from {CONFIG}")
+    return True
+
+
+def add_auto_tables(target: str, tables: list[str]) -> bool:
+    """Append tables to auto_tables list of a database entry in config.toml."""
+    raw_lines, entry = _load_target_entry(target)
+    if not entry:
+        return False
+    if not tables:
+        return True
+
+    auto_re = re.compile(r"^(\s*auto_tables\s*=\s*)\[(.*)\](.*)$")
+    found_idx = -1
+    existing_tables: list[str] = []
+
+    for idx, line in enumerate(entry.lines):
+        m = auto_re.match(line)
+        if m:
+            found_idx = idx
+            raw_list = "[" + m.group(2) + "]"
+            try:
+                import json
+                parsed = json.loads(raw_list.replace("'", '"'))
+                if isinstance(parsed, list):
+                    existing_tables = [str(x) for x in parsed]
+            except Exception:
+                existing_tables = [t.strip().strip("\"'") for t in m.group(2).split(",") if t.strip()]
+            break
+
+    merged = list(existing_tables)
+    for t in tables:
+        if t not in merged and t.lower() not in [x.lower() for x in merged]:
+            merged.append(t)
+
+    import json
+    formatted_list = json.dumps(merged)
+    new_line = f"auto_tables = {formatted_list}\n"
+
+    new_lines = list(entry.lines)
+    if found_idx >= 0:
+        new_lines[found_idx] = new_line
+    else:
+        if len(new_lines) > 0:
+            new_lines.insert(1, new_line)
+        else:
+            new_lines.append(new_line)
+
+    save_config_lines(raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :])
     return True
 
 

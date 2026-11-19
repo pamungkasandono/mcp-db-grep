@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Granular Database Access Control Engine**:
+  - **Decoupled Metadata vs Data Permissions**: Split generic metadata exploration (`read_metadata = true/false`, formerly `auto_metadata`) from row queries (`read_data = true/false`).
+  - **Column-Level Access Control (`sensitive_columns`)**: Protect specific sensitive columns (e.g. `salary*`, `user.nik`, `password_hash`). Any query referencing sensitive columns strictly triggers manual approval even if the table is in `auto_tables`. Guarded wildcard (`SELECT *`) queries against sensitive tables.
+  - **Strict Table Override (`always_ask_tables`)**: High-priority table list (e.g. `pegawai_salary`, `user_identity`) that mandates manual human confirmation every time, overriding `auto_tables` and `read_data`.
+  - **Interactive Terminal Persistence**: Replaced blunt session-wide auto-approve with per-table auto-allow. Pressing `[a]lways allow` in `db-grep monitor` automatically appends the queried table(s) to `auto_tables` in `config.toml` without manual file editing. If sensitive data is touched, auto-allow persistence is automatically disabled.
+  - **Contextual Terminal Monitor Display**: Enhanced the monitor prompt to explicitly display accessed tables, queried columns, and trigger reasons (e.g. `[SENSITIVE COLUMN]`, `[ALWAYS-ASK TABLE]`, or `[UNAPPROVED TABLE]`).
+
 ## [0.7.0] - 2026-11-19
 
 ### Added

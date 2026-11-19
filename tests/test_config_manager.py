@@ -219,6 +219,38 @@ dsn = "postgres://localhost/ecom"
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    def test_add_auto_tables(self):
+        sample = b"""[monitor]
+port = 48260
+
+[db.postgres.orders-db]
+dsn = "postgres://localhost/orders"
+auto_tables = ["orders"]
+
+[db.mysql.inventory-db]
+dsn = "mysql://localhost/inv"
+"""
+        with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as tmp:
+            tmp.write(sample)
+            tmp_path = Path(tmp.name)
+
+        try:
+            with patch.object(config_manager, "CONFIG", tmp_path):
+                # 1. Append to entry with existing auto_tables
+                ok = config_manager.add_auto_tables("orders-db", ["order_items", "orders"])
+                self.assertTrue(ok)
+
+                # 2. Add to entry without existing auto_tables
+                ok2 = config_manager.add_auto_tables("mysql:inventory-db", ["stock", "warehouses"])
+                self.assertTrue(ok2)
+
+                content = tmp_path.read_text(encoding="utf-8")
+                # Deduplicated and merged
+                self.assertIn('auto_tables = ["orders", "order_items"]', content)
+                self.assertIn('auto_tables = ["stock", "warehouses"]', content)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()

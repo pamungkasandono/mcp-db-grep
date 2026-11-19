@@ -54,7 +54,8 @@ approval_timeout_s = 110      # auto-reject after this many seconds without resp
 history_limit = 20           # replay recent audit activity before monitor opened (0 = off)
 
 [defaults]
-auto_metadata = true          # list_tables, find_objects & describe_table without y/n
+read_metadata = true          # list_tables, find_objects & describe_table without y/n
+read_data = false             # data queries require approval unless auto_tables
 max_rows = 1000
 timeout_ms = 10000
 

@@ -20,10 +20,11 @@ Context = Annotated[str, Field(
 Konteks = Context
 DbName = Annotated[str, Field(description="Database connection name. See list_databases.")]
 
-KNOWN_DEFAULTS_KEYS = {"auto_metadata", "max_rows", "timeout_ms"}
+KNOWN_DEFAULTS_KEYS = {"auto_metadata", "read_metadata", "read_data", "max_rows", "timeout_ms"}
 KNOWN_DB_KEYS = {
     "type", "dsn", "user", "password", "password_env", "description",
-    "schema", "auto_metadata", "auto_tables", "max_rows", "timeout_ms"
+    "schema", "auto_metadata", "read_metadata", "read_data",
+    "auto_tables", "always_ask_tables", "sensitive_columns", "max_rows", "timeout_ms"
 }
 KNOWN_MONITOR_KEYS = {"port", "approval_timeout_s"}
 
@@ -265,15 +266,23 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
     if not raw_dsn:
         errors.append("Missing required field 'dsn'")
 
-    if "auto_tables" in cfg:
-        if not isinstance(cfg["auto_tables"], list) or not all(isinstance(x, str) for x in cfg["auto_tables"]):
-            errors.append("'auto_tables' must be a list of strings")
+    for list_field in ("auto_tables", "always_ask_tables", "sensitive_columns"):
+        if list_field in cfg:
+            if not isinstance(cfg[list_field], list) or not all(isinstance(x, str) for x in cfg[list_field]):
+                errors.append(f"'{list_field}' must be a list of strings")
 
-    # Inheritance (auto_tables is NEVER inherited)
-    cfg["auto_metadata"] = cfg.get("auto_metadata", defaults.get("auto_metadata", True))
+    # Inheritance (auto_tables, always_ask_tables, and sensitive_columns are NEVER inherited)
+    cfg["read_metadata"] = cfg.get(
+        "read_metadata",
+        cfg.get("auto_metadata", defaults.get("read_metadata", defaults.get("auto_metadata", True))),
+    )
+    cfg["auto_metadata"] = cfg["read_metadata"]  # Sync legacy alias
+    cfg["read_data"] = cfg.get("read_data", defaults.get("read_data", False))
     cfg["max_rows"] = cfg.get("max_rows", defaults.get("max_rows", 100))
     cfg["timeout_ms"] = cfg.get("timeout_ms", defaults.get("timeout_ms", 10_000))
     cfg.setdefault("auto_tables", [])
+    cfg.setdefault("always_ask_tables", [])
+    cfg.setdefault("sensitive_columns", [])
 
     auth_source = None
     try:
@@ -312,24 +321,80 @@ def _validate_db_entry(driver_type: str, sub_cfg: object, defaults: dict) -> tup
     return cfg, auth_source, errors
 
 
-def extract_tables(sql: str, dialect: str = "postgres") -> set[str]:
+def inspect_query_access(sql: str, dialect: str = "postgres") -> tuple[set[str], set[str], bool]:
+    """
+    Extracts referenced physical tables, explicit columns, and star/wildcard usage.
+    Excludes CTE definitions and aliases from table names.
+    """
     try:
         d_name = dialect if dialect in ("postgres", "oracle", "mysql") else "postgres"
         parsed = sqlglot.parse_one(sql, read=d_name)
         if not parsed:
-            return set()
+            return set(), set(), False
         ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(exp.CTE) if cte.alias_or_name}
         tables = {t.name.lower() for t in parsed.find_all(exp.Table) if t.name} - ctes
-        return tables
+        columns = {c.name.lower() for c in parsed.find_all(exp.Column) if c.name}
+        has_star = bool(list(parsed.find_all(exp.Star)))
+        return tables, columns, has_star
     except Exception:
-        return set()
+        return set(), set(), False
+
+
+def extract_tables(sql: str, dialect: str = "postgres") -> set[str]:
+    return inspect_query_access(sql, dialect)[0]
+
+
+def matches_pattern(name: str, patterns: list[str]) -> bool:
+    if not name or not patterns:
+        return False
+    name_lower = name.lower()
+    return any(fnmatch.fnmatch(name_lower, p.lower()) for p in patterns)
 
 
 def matches_auto_tables(table_name: str, patterns: list[str]) -> bool:
-    if not table_name or not patterns:
-        return False
-    name_lower = table_name.lower()
-    return any(fnmatch.fnmatch(name_lower, p.lower()) for p in patterns)
+    return matches_pattern(table_name, patterns)
+
+
+def check_sensitive_columns(
+    columns: set[str],
+    tables: set[str],
+    has_star: bool,
+    sensitive_patterns: list[str],
+) -> list[str]:
+    """
+    Returns list of matched sensitive column descriptions if any.
+    Handles:
+    - Bare column patterns (e.g. 'salary*', 'password_hash')
+    - Table-qualified patterns (e.g. 'pegawai.salary_amount')
+    - Wildcard '*' queries on tables with sensitive columns
+    """
+    if not sensitive_patterns:
+        return []
+
+    matched = set()
+
+    for col in columns:
+        for pat in sensitive_patterns:
+            pat_lower = pat.lower()
+            if "." in pat_lower:
+                pat_tbl, pat_col = pat_lower.split(".", 1)
+                if any(fnmatch.fnmatch(t.lower(), pat_tbl) for t in tables) and fnmatch.fnmatch(col.lower(), pat_col):
+                    matched.add(f"{col} ({pat})")
+            else:
+                if fnmatch.fnmatch(col.lower(), pat_lower):
+                    matched.add(col)
+
+    if has_star:
+        for pat in sensitive_patterns:
+            pat_lower = pat.lower()
+            if "." in pat_lower:
+                pat_tbl, _ = pat_lower.split(".", 1)
+                if any(fnmatch.fnmatch(t.lower(), pat_tbl) for t in tables):
+                    matched.add(f"* on {pat_tbl} ({pat})")
+            else:
+                matched.add(f"* ({pat})")
+
+    return sorted(matched)
 
 
 # ---------- config ----------
@@ -1001,33 +1066,82 @@ check_konteks = check_context
 async def execute(tool, d, context, sql, params=(), reject=None):
     context = check_context(context)
 
-    # Evaluate auto-allow rules
-    auto_metadata = d.cfg.get("auto_metadata", True)
+    # Evaluate access control rules
+    read_metadata = d.cfg.get("read_metadata", d.cfg.get("auto_metadata", True))
+    read_data = d.cfg.get("read_data", False)
     auto_tables = d.cfg.get("auto_tables", [])
+    always_ask_tables = d.cfg.get("always_ask_tables", [])
+    sensitive_columns = d.cfg.get("sensitive_columns", [])
+
     auto_allow = False
     auto_reason = None
+    trigger_reason = None
+    can_auto_allow = True
+    candidate_tables: list[str] = []
+    queried_tables: set[str] = set()
+    queried_columns: set[str] = set()
+    matched_sensitive: list[str] = []
 
     if tool in ("list_tables", "find_objects", "search_columns"):
-        if auto_metadata:
+        if read_metadata:
             auto_allow = True
-            auto_reason = "auto_metadata = true"
+            auto_reason = "read_metadata = true"
+        else:
+            trigger_reason = "read_metadata is disabled"
+            can_auto_allow = False
+
     elif tool == "describe_table":
         table_name = params[1] if len(params) > 1 else ""
-        if auto_metadata:
+        if table_name:
+            queried_tables = {table_name.lower()}
+
+        if table_name and matches_pattern(table_name, always_ask_tables):
+            trigger_reason = f"always_ask_table '{table_name}'"
+            can_auto_allow = False
+        elif read_metadata:
             auto_allow = True
-            auto_reason = "auto_metadata = true"
-        elif auto_tables and matches_auto_tables(table_name, auto_tables):
+            auto_reason = "read_metadata = true"
+        elif auto_tables and matches_pattern(table_name, auto_tables):
             auto_allow = True
             auto_reason = f"table '{table_name}' matches auto_tables"
+        else:
+            trigger_reason = f"table '{table_name}' not in auto_tables"
+            candidate_tables = [table_name] if table_name else []
+
     elif tool in ("query", "sample_table"):
-        if tool == "sample_table" and auto_metadata:
+        if tool == "sample_table" and read_metadata:
             auto_allow = True
-            auto_reason = "auto_metadata = true"
-        elif auto_tables:
-            queried_tables = extract_tables(sql, dialect=d.cfg["type"])
-            if queried_tables and all(matches_auto_tables(tbl, auto_tables) for tbl in queried_tables):
+            auto_reason = "read_metadata = true"
+        else:
+            queried_tables, queried_columns, has_star = inspect_query_access(
+                sql, dialect=d.cfg.get("type", "postgres")
+            )
+
+            # Priority 1: Sensitive columns (Highest priority)
+            matched_sensitive = check_sensitive_columns(
+                queried_columns, queried_tables, has_star, sensitive_columns
+            )
+            if matched_sensitive:
+                trigger_reason = f"sensitive column(s): {', '.join(matched_sensitive)}"
+                can_auto_allow = False
+
+            # Priority 2: Always-Ask tables (High priority)
+            elif any(matches_pattern(tbl, always_ask_tables) for tbl in queried_tables):
+                matched_always = [tbl for tbl in queried_tables if matches_pattern(tbl, always_ask_tables)]
+                trigger_reason = f"always_ask_table(s): {', '.join(sorted(matched_always))}"
+                can_auto_allow = False
+
+            # Priority 3: read_data or auto_tables
+            elif read_data:
+                auto_allow = True
+                auto_reason = "read_data = true"
+            elif queried_tables and all(matches_pattern(tbl, auto_tables) for tbl in queried_tables):
                 auto_allow = True
                 auto_reason = f"all tables ({', '.join(sorted(queried_tables))}) match auto_tables"
+            else:
+                unapproved = [tbl for tbl in queried_tables if not matches_pattern(tbl, auto_tables)]
+                trigger_reason = f"unapproved table(s): {', '.join(sorted(unapproved))}" if unapproved else "query requires approval"
+                candidate_tables = sorted(unapproved)
 
     async with lock:
         try:
@@ -1043,7 +1157,19 @@ async def execute(tool, d, context, sql, params=(), reject=None):
                 f"The database monitor (`db-grep monitor`) must be opened in another terminal to review and approve this action."
             )
 
-        msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "context": context, "sql": sql}
+        msg = {
+            "tool": tool,
+            "db": d.name,
+            "db_type": d.cfg.get("type", ""),
+            "context": context,
+            "sql": sql,
+            "tables": sorted(queried_tables),
+            "columns": sorted(queried_columns),
+            "trigger_reason": trigger_reason,
+            "sensitive_matched": matched_sensitive,
+            "can_auto_allow": can_auto_allow,
+            "candidate_tables": candidate_tables,
+        }
         if reject:
             await link.send({"type": "blocked", "reason": reject, **msg})
             audit("blocked", reason=reject, tool=tool, db=d.name, context=context, sql=sql)
@@ -1053,7 +1179,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
             audit("auto_allow", db=d.name, tool=tool, reason=auto_reason, sql=sql, context=context)
             await link.send({"type": "auto_allow", "reason": auto_reason, "params": params, **msg})
         else:
-            audit("request", db=d.name, db_type=d.cfg.get("type", ""), context=context, tool=tool, sql=sql, params=params)
+            audit("request", db=d.name, db_type=d.cfg.get("type", ""), context=context, tool=tool, sql=sql, params=params, trigger_reason=trigger_reason)
             await link.send({"type": "request", "params": params, **msg})
             line = await link.reader.readline()  # timeout is managed by monitor
             if not line:
@@ -1068,8 +1194,20 @@ async def execute(tool, d, context, sql, params=(), reject=None):
                     f"SQL: {sql}\n"
                     f"Context: {context}"
                 )
-            if resp.get("auto_session"):
-                audit("session_auto_approve", db=d.name, tool=tool, sql=sql, context=context)
+
+            # Persist newly allowed tables to config.toml if user chose [a]lways allow
+            add_tables = resp.get("add_auto_tables", [])
+            if add_tables:
+                try:
+                    import config_manager
+                    db_target = f"{d.cfg.get('type')}:{d.name}"
+                    config_manager.add_auto_tables(db_target, add_tables)
+                    for t in add_tables:
+                        if t not in d.cfg["auto_tables"] and t.lower() not in [x.lower() for x in d.cfg["auto_tables"]]:
+                            d.cfg["auto_tables"].append(t)
+                    audit("add_auto_tables", db=d.name, tables=add_tables)
+                except Exception:
+                    pass
 
         t0 = time.monotonic()
         try:
@@ -1178,8 +1316,12 @@ def inspect_config() -> dict:
                 "key": f"{driver_type}:{db_name}",
                 "driver": driver_type,
                 "description": cfg_norm.get("description", "") if cfg_norm else "",
-                "auto_metadata": cfg_norm["auto_metadata"] if cfg_norm else True,
+                "read_metadata": cfg_norm.get("read_metadata", True) if cfg_norm else True,
+                "read_data": cfg_norm.get("read_data", False) if cfg_norm else False,
+                "auto_metadata": cfg_norm.get("read_metadata", True) if cfg_norm else True,  # legacy compatibility
                 "auto_tables": cfg_norm["auto_tables"] if cfg_norm and isinstance(cfg_norm.get("auto_tables"), list) else [],
+                "always_ask_tables": cfg_norm["always_ask_tables"] if cfg_norm and isinstance(cfg_norm.get("always_ask_tables"), list) else [],
+                "sensitive_columns": cfg_norm["sensitive_columns"] if cfg_norm and isinstance(cfg_norm.get("sensitive_columns"), list) else [],
                 "valid": not errors,
                 "errors": errors,
             }
