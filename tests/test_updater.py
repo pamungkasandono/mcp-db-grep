@@ -198,6 +198,36 @@ class TestUpdater(unittest.TestCase):
             res = updater.fetch_multi_version_changelog("0.3.1", "0.5.0", fallback_body="Fallback release note")
             self.assertEqual(res, "Fallback release note")
 
+    def test_fetch_multi_version_changelog_prefers_tag_url(self):
+        sample = b"## [0.8.1] - 2026-11-19\n### Added\n- Feature 81\n\n## [0.8.0] - 2026-11-19\n### Added\n- Feature 80"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = sample
+        mock_resp.__enter__.return_value = mock_resp
+
+        requested_urls = []
+        def fake_urlopen(req, *args, **kwargs):
+            requested_urls.append(req.full_url)
+            return mock_resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            res = updater.fetch_multi_version_changelog("0.7.0", "0.8.1")
+            self.assertTrue(requested_urls[0].endswith("/v0.8.1/CHANGELOG.md"))
+            self.assertIn("## [0.8.1]", res)
+            self.assertIn("## [0.8.0]", res)
+
+    def test_fetch_multi_version_changelog_injects_fallback_if_target_missing(self):
+        # Simulates stale changelog missing 0.8.1 but containing 0.8.0
+        sample_stale = b"## [0.8.0] - 2026-11-19\n### Added\n- Feature 80"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = sample_stale
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            res = updater.fetch_multi_version_changelog("0.7.0", "0.8.1", fallback_body="Release note for 0.8.1")
+            self.assertIn("## [0.8.1]", res)
+            self.assertIn("Release note for 0.8.1", res)
+            self.assertIn("## [0.8.0]", res)
+
     def test_render_markdown_changelog(self):
         sample = """## [0.5.0] - 2026-11-18
 ### Added

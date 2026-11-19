@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Tag-Based Changelog Resolution**: Switched `fetch_multi_version_changelog` to query release tag snapshots (`/v<tag>/CHANGELOG.md`) before falling back to `main`. Bypasses Fastly CDN 5-minute caching on GitHub raw branch URLs and ensures newly published releases are never omitted when updating across version jumps.
+
 ## [0.8.1] - 2026-11-19
 
 ### Added

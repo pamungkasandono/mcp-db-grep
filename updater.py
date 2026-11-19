@@ -171,15 +171,29 @@ def fetch_multi_version_changelog(current_ver: str, target_ver: str, fallback_bo
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(RAW_CHANGELOG_URL, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-            extracted = extract_changelog_between(text, current_ver, target_ver)
-            if extracted.strip():
-                return extracted.strip()
-    except Exception:
-        pass
+
+    tag_clean = target_ver.strip().lstrip("v")
+    candidate_urls = [
+        f"https://raw.githubusercontent.com/{GITHUB_REPO}/v{tag_clean}/CHANGELOG.md",
+        f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag_clean}/CHANGELOG.md",
+        RAW_CHANGELOG_URL,
+    ]
+
+    for url in candidate_urls:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                text = resp.read().decode("utf-8", errors="replace")
+                extracted = extract_changelog_between(text, current_ver, target_ver)
+                if extracted.strip():
+                    target_header = f"[{tag_clean}]"
+                    if target_header in extracted:
+                        return extracted.strip()
+                    if fallback_body.strip():
+                        return f"## [{tag_clean}]\n\n{fallback_body.strip()}\n\n{extracted.strip()}".strip()
+                    return extracted.strip()
+        except Exception:
+            continue
 
     return fallback_body.strip()
 
