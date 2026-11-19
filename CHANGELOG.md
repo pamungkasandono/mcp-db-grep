@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-19
+
 ### Changed
 - **Unified & Granular Access Control Configuration (Breaking Change)**:
   - Replaced inconsistent key naming and boolean permissions with capability lists and symmetric policy conventions:
