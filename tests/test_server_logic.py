@@ -512,6 +512,79 @@ dsn = "hr/hr@localhost/hr"
         self.assertIn("Hint: Oracle SQL does not support the 'LIMIT' clause", err_text)
         self.assertIn("FETCH FIRST 10 ROWS ONLY", err_text)
 
+    def test_sample_table_dialect_queries(self):
+        # 1. Postgres
+        pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test"})
+        sql_pg, params_pg = pg.get_sample_query("billing.invoices", limit=5)
+        self.assertEqual(sql_pg, 'SELECT * FROM "billing"."invoices" LIMIT %s')
+        self.assertEqual(params_pg, (5,))
+
+        # 2. MySQL
+        my = server.MySQL("my_test", {"type": "mysql", "dsn": "mysql://localhost/test"})
+        sql_my, params_my = my.get_sample_query("orders", limit=3, schema="shop")
+        self.assertEqual(sql_my, "SELECT * FROM `shop`.`orders` LIMIT %s")
+        self.assertEqual(params_my, (3,))
+
+        # 3. Oracle
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "user/pw@localhost/test", "schema": "HR"})
+        sql_ora, params_ora = ora.get_sample_query("employees", limit=10)
+        self.assertEqual(sql_ora, 'SELECT * FROM "HR"."EMPLOYEES" WHERE ROWNUM <= :1')
+        self.assertEqual(params_ora, (10,))
+
+        # 4. Invalid identifier validation
+        with self.assertRaises(ValueError):
+            pg.get_sample_query("users; DROP TABLE users--")
+
+    def test_search_columns_dialect_queries(self):
+        # 1. Postgres
+        pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test"})
+        sql_pg, params_pg = pg.get_search_columns_query("cif_number", limit=20)
+        self.assertIn("FROM information_schema.columns", sql_pg)
+        self.assertIn("pg_catalog", sql_pg)
+        self.assertEqual(params_pg, ("%cif_number%", 20))
+
+        # 2. MySQL
+        my = server.MySQL("my_test", {"type": "mysql", "dsn": "mysql://localhost/test"})
+        sql_my, params_my = my.get_search_columns_query("email", schema="customer", limit=15)
+        self.assertIn("FROM information_schema.columns", sql_my)
+        self.assertIn("performance_schema", sql_my)
+        self.assertEqual(params_my, ("%email%", "customer", 15))
+
+        # 3. Oracle
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "user/pw@localhost/test"})
+        sql_ora, params_ora = ora.get_search_columns_query("nik", schema="hr", limit=25)
+        self.assertIn("FROM all_tab_columns", sql_ora)
+        self.assertIn("WHERE ROWNUM <=", sql_ora)
+        self.assertEqual(params_ora, ("%nik%", "hr", 25))
+
+    def test_sample_table_and_search_columns_mcp_tools(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.postgres.crm]
+dsn = "postgres://localhost/crm"
+"""
+        with self.temp_config(sample_toml):
+            # Test sample_table tool execution
+            with patch.object(server, "execute", return_value='[{"id": 1, "code": "ABC"}]') as mock_exec:
+                res = asyncio.run(server.sample_table("crm", "customers", "crm · preview sample", limit=5))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "sample_table")
+                self.assertEqual(call_args[3], 'SELECT * FROM "customers" LIMIT %s')
+                self.assertEqual(call_args[4], (5,))
+                self.assertEqual(json.loads(res), [{"id": 1, "code": "ABC"}])
+
+            # Test search_columns tool execution
+            with patch.object(server, "execute", return_value='[{"schema_name":"public","table_name":"customers","column_name":"cif_no","data_type":"text"}]') as mock_exec:
+                res = asyncio.run(server.search_columns("crm", "cif*", "crm · find column", limit=10))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "search_columns")
+                self.assertEqual(call_args[4], ("cif%", 10))
+                self.assertEqual(len(json.loads(res)), 1)
+
+
 
 
 if __name__ == "__main__":

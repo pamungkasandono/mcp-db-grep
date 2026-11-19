@@ -444,6 +444,48 @@ class DB:
         )
         return sql, tuple(params)
 
+    @staticmethod
+    def _parse_and_validate_table(table: str, schema: str = "") -> tuple[str, str]:
+        table_clean = table.strip().strip('"').strip("'")
+        target_schema = schema.strip().strip('"').strip("'")
+        if "." in table_clean and not target_schema:
+            parts = table_clean.split(".", 1)
+            target_schema = parts[0].strip().strip('"').strip("'")
+            table_clean = parts[1].strip().strip('"').strip("'")
+
+        if not re.match(r"^[A-Za-z0-9_#$]+$", table_clean):
+            raise ValueError(f"Invalid table identifier: '{table}'")
+        if target_schema and not re.match(r"^[A-Za-z0-9_#$]+$", target_schema):
+            raise ValueError(f"Invalid schema identifier: '{schema}'")
+        return target_schema, table_clean
+
+    def get_sample_query(self, table: str, limit: int = 5, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        ident = f'"{target_schema}"."{table_clean}"' if target_schema else f'"{table_clean}"'
+        max_limit = max(1, min(limit or 5, 50, self.max_rows))
+        return f"SELECT * FROM {ident} LIMIT %s", (max_limit,)
+
+    def get_search_columns_query(self, pattern: str, schema: str = "", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        conds = [
+            "table_schema NOT IN ('pg_catalog', 'information_schema')",
+            "UPPER(column_name) LIKE UPPER(%s)"
+        ]
+        params = [clean_pat]
+        if schema:
+            conds.append("LOWER(table_schema) = LOWER(%s)")
+            params.append(schema.strip())
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+        sql = (
+            "SELECT table_schema AS schema_name, table_name, column_name, data_type "
+            "FROM information_schema.columns "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY table_schema, table_name, ordinal_position "
+            "LIMIT %s"
+        )
+        return sql, tuple(params)
+
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
@@ -576,6 +618,33 @@ class MySQL(DB):
         )
         return sql, tuple(params)
 
+    def get_sample_query(self, table: str, limit: int = 5, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        ident = f"`{target_schema}`.`{table_clean}`" if target_schema else f"`{table_clean}`"
+        max_limit = max(1, min(limit or 5, 50, self.max_rows))
+        return f"SELECT * FROM {ident} LIMIT %s", (max_limit,)
+
+    def get_search_columns_query(self, pattern: str, schema: str = "", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        conds = [
+            "table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')",
+            "UPPER(column_name) LIKE UPPER(%s)"
+        ]
+        params = [clean_pat]
+        if schema:
+            conds.append("LOWER(table_schema) = LOWER(%s)")
+            params.append(schema.strip())
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+        sql = (
+            "SELECT table_schema AS schema_name, table_name, column_name, data_type "
+            "FROM information_schema.columns "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY table_schema, table_name, ordinal_position "
+            "LIMIT %s"
+        )
+        return sql, tuple(params)
+
     def connect(self):
         import pymysql
         dsn = self.get_dsn()
@@ -663,6 +732,40 @@ class Oracle(DB):
             "FROM all_objects "
             f"WHERE {' AND '.join(conds)} "
             "ORDER BY owner, object_name"
+            f") WHERE ROWNUM <= :{idx}"
+        )
+        return sql, tuple(params)
+
+    def get_sample_query(self, table: str, limit: int = 5, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_owner = target_schema or self.default_schema
+        ident = f'"{target_owner.upper()}"."{table_clean.upper()}"' if target_owner else f'"{table_clean.upper()}"'
+        max_limit = max(1, min(limit or 5, 50, self.max_rows))
+        return f"SELECT * FROM {ident} WHERE ROWNUM <= :1", (max_limit,)
+
+    def get_search_columns_query(self, pattern: str, schema: str = "", limit: int = 50):
+        clean_pat = self._clean_pattern(pattern)
+        conds = ["UPPER(column_name) LIKE UPPER(:1)"]
+        params = [clean_pat]
+        idx = 2
+        if schema:
+            conds.append(f"owner = UPPER(:{idx})")
+            params.append(schema.strip())
+            idx += 1
+        else:
+            conds.append(
+                "owner NOT IN ('SYS', 'SYSTEM', 'DBSNMP', 'CTXSYS', 'MDSYS', "
+                "'XDB', 'OUTLN', 'WMSYS', 'APPQOSSYS', 'AUDSYS', 'GSMADMIN_INTERNAL', "
+                "'LBACSYS', 'OJVMSYS')"
+            )
+        max_limit = max(1, min(limit or 50, self.max_rows))
+        params.append(max_limit)
+        sql = (
+            "SELECT schema_name, table_name, column_name, data_type FROM ("
+            "SELECT owner AS schema_name, table_name, column_name, data_type "
+            "FROM all_tab_columns "
+            f"WHERE {' AND '.join(conds)} "
+            "ORDER BY owner, table_name, column_id"
             f") WHERE ROWNUM <= :{idx}"
         )
         return sql, tuple(params)
@@ -904,7 +1007,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
     auto_allow = False
     auto_reason = None
 
-    if tool in ("list_tables", "find_objects"):
+    if tool in ("list_tables", "find_objects", "search_columns"):
         if auto_metadata:
             auto_allow = True
             auto_reason = "auto_metadata = true"
@@ -916,8 +1019,11 @@ async def execute(tool, d, context, sql, params=(), reject=None):
         elif auto_tables and matches_auto_tables(table_name, auto_tables):
             auto_allow = True
             auto_reason = f"table '{table_name}' matches auto_tables"
-    elif tool == "query":
-        if auto_tables:
+    elif tool in ("query", "sample_table"):
+        if tool == "sample_table" and auto_metadata:
+            auto_allow = True
+            auto_reason = "auto_metadata = true"
+        elif auto_tables:
             queried_tables = extract_tables(sql, dialect=d.cfg["type"])
             if queried_tables and all(matches_auto_tables(tbl, auto_tables) for tbl in queried_tables):
                 auto_allow = True
@@ -1227,6 +1333,23 @@ async def find_objects(
 
 
 @mcp.tool()
+async def search_columns(
+    db: DbName,
+    pattern: str,
+    context: Context,
+    schema: str = "",
+    limit: int = 50,
+) -> str:
+    """Search for columns matching a pattern/keyword across tables and views (case-insensitive).
+    Searches across all accessible schemas if schema is empty.
+    Returns list of matching columns with schema_name, table_name, column_name, and data_type.
+    Ideal for finding which tables store a specific column (e.g. '*CIF*', 'NIK', 'KODE_CABANG')."""
+    d = get_db(db)
+    sql, params = d.get_search_columns_query(pattern, schema=schema, limit=limit)
+    return await execute("search_columns", d, context, sql, params)
+
+
+@mcp.tool()
 async def describe_table(
     db: DbName,
     table: str,
@@ -1294,6 +1417,22 @@ async def describe_table(
     out["columns"] = cols_out
 
     return json.dumps(out)
+
+
+@mcp.tool()
+async def sample_table(
+    db: DbName,
+    table: str,
+    context: Context,
+    limit: int = 5,
+    schema: str = "",
+) -> str:
+    """Quick preview of 1-50 rows from a table or view (default: 5 rows).
+    Automatically generates dialect-specific limit queries (LIMIT / ROWNUM).
+    Ideal for inspecting real data values and column formats without writing manual queries."""
+    d = get_db(db)
+    sql, params = d.get_sample_query(table, limit=limit, schema=schema)
+    return await execute("sample_table", d, context, sql, params)
 
 
 @mcp.tool()

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`search_columns` MCP Tool**: Fast cross-table and cross-schema column search (`*pattern*`, `%...%`) to quickly locate where specific business fields (e.g. `CIF_NUMBER`, `NIK`, `KODE_CABANG`) are stored across PostgreSQL, MySQL, and Oracle.
+- **`sample_table` MCP Tool**: 1-click preview of 1–50 actual data rows (default: 5) from a table or view without manually authoring SQL or thinking about database limit dialects. Automatically applies `ROWNUM <= N` for Oracle and `LIMIT N` for PostgreSQL/MySQL.
+- **Whitelist `auto_metadata` Alignment**: Included both `search_columns` and `sample_table` under `auto_metadata = true` for frictionless exploration without repetitive manual approval prompts.
 - **`describe_table` Token Optimization & Compact Mode**: Added optional `compact: bool = False` parameter to `describe_table` to output concise column names and data types, reducing payload size by up to ~70% on wide enterprise tables (100+ columns).
 - **Compilation Status & Diagnostics on `describe_table`**: Returns object status (`VALID` or `INVALID`) by querying `all_objects` in Oracle. Detects broken views (e.g. `DATA_TYPE = 'UNDEFINED'`) upfront and attaches diagnostic guidance before failing with `ORA-04063`.
 - **Educational Dialect Hints for Oracle Queries**: Intercepts `ORA-00933` syntax errors when a query against Oracle includes `LIMIT <n>`, providing an actionable hint to use `FETCH FIRST <n> ROWS ONLY` (Oracle 12c+) or `WHERE ROWNUM <= <n>`.
