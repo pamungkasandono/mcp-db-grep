@@ -609,13 +609,18 @@ class Oracle(DB):
                 "SELECT view_name AS table_name FROM all_views WHERE owner = UPPER(:1) "
                 "ORDER BY table_name")
     DESC_SQL = (
-        "SELECT column_name, data_type, nullable FROM all_tab_columns "
-        "WHERE (owner = UPPER(:1) AND table_name = UPPER(:2)) "
-        "   OR (owner, table_name) IN ("
+        "SELECT c.column_name, c.data_type, c.nullable, o.status "
+        "FROM all_tab_columns c "
+        "LEFT JOIN all_objects o ON ("
+        "    o.owner = c.owner AND o.object_name = c.table_name "
+        "    AND o.object_type IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW')"
+        ") "
+        "WHERE (c.owner = UPPER(:1) AND c.table_name = UPPER(:2)) "
+        "   OR (c.owner, c.table_name) IN ("
         "       SELECT table_owner, table_name FROM all_synonyms "
         "       WHERE owner IN (UPPER(:1), 'PUBLIC') AND synonym_name = UPPER(:2)"
         "   ) "
-        "ORDER BY column_id"
+        "ORDER BY c.column_id"
     )
 
     @property
@@ -695,6 +700,17 @@ class Oracle(DB):
                 cur.execute(sql, params)
                 cols = [d[0] for d in cur.description]
                 return cols, cur.fetchmany(self.max_rows)
+        except Exception as e:
+            err_msg = str(e)
+            if "ORA-00933" in err_msg and re.search(r"\blimit\s+\d+", sql, re.IGNORECASE):
+                m = re.search(r"\blimit\s+(\d+)", sql, re.IGNORECASE)
+                n = m.group(1) if m else "N"
+                hint = (
+                    f"\n💡 Hint: Oracle SQL does not support the 'LIMIT' clause. "
+                    f"Use 'FETCH FIRST {n} ROWS ONLY' (Oracle 12c+) or 'WHERE ROWNUM <= {n}' instead."
+                )
+                raise type(e)(f"{err_msg}{hint}") from e
+            raise
         finally:
             try:
                 self.conn.rollback()
@@ -1211,8 +1227,16 @@ async def find_objects(
 
 
 @mcp.tool()
-async def describe_table(db: DbName, table: str, context: Context, schema: str = "") -> str:
-    """Columns, data types, and nullability of a table or view. Supports 'schema.table' format. Requires user approval."""
+async def describe_table(
+    db: DbName,
+    table: str,
+    context: Context,
+    schema: str = "",
+    compact: bool = False,
+) -> str:
+    """Columns, data types, and nullability of a table or view. Supports 'schema.table' format.
+    Set compact=True to return only column names and types, saving tokens for wide tables.
+    Returns object status (VALID/INVALID) and helpful diagnostic hints if invalid. Requires user approval."""
     d = get_db(db)
     table_clean = table.strip().strip('"').strip("'")
     target_schema = schema.strip()
@@ -1221,7 +1245,55 @@ async def describe_table(db: DbName, table: str, context: Context, schema: str =
         target_schema = parts[0].strip().strip('"').strip("'")
         table_clean = parts[1].strip().strip('"').strip("'")
 
-    return await execute("describe_table", d, context, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
+    res_json = await execute("describe_table", d, context, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
+    try:
+        raw_rows = json.loads(res_json)
+    except Exception:
+        return res_json
+
+    if not isinstance(raw_rows, list):
+        return res_json
+
+    target_name = f"{target_schema}.{table_clean}" if target_schema else table_clean
+    if not raw_rows:
+        return json.dumps({"table": target_name, "status": "NOT_FOUND", "columns": []})
+
+    # Detect object status and any compilation issues
+    status = "VALID"
+    error_hint = None
+    cols_out = []
+
+    for r in raw_rows:
+        # Normalize keys regardless of DB casing
+        r_low = {k.lower(): v for k, v in r.items()}
+        col_name = r_low.get("column_name") or r_low.get("name") or ""
+        col_type = r_low.get("data_type") or r_low.get("type") or ""
+        nullable = r_low.get("is_nullable") or r_low.get("nullable") or ""
+        row_status = r_low.get("status")
+
+        if (row_status and str(row_status).upper() == "INVALID") or col_type.upper() == "UNDEFINED":
+            status = "INVALID"
+
+        if compact:
+            cols_out.append({"name": col_name, "type": col_type})
+        else:
+            col_def = {"name": col_name, "type": col_type}
+            if nullable:
+                col_def["nullable"] = nullable
+            cols_out.append(col_def)
+
+    if status == "INVALID":
+        error_hint = "View has compilation errors in database (status: INVALID). Querying this view will fail with ORA-04063."
+
+    out = {
+        "table": target_name,
+        "status": status,
+    }
+    if error_hint:
+        out["error_hint"] = error_hint
+    out["columns"] = cols_out
+
+    return json.dumps(out)
 
 
 @mcp.tool()

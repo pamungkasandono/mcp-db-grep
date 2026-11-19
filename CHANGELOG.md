@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`describe_table` Token Optimization & Compact Mode**: Added optional `compact: bool = False` parameter to `describe_table` to output concise column names and data types, reducing payload size by up to ~70% on wide enterprise tables (100+ columns).
+- **Compilation Status & Diagnostics on `describe_table`**: Returns object status (`VALID` or `INVALID`) by querying `all_objects` in Oracle. Detects broken views (e.g. `DATA_TYPE = 'UNDEFINED'`) upfront and attaches diagnostic guidance before failing with `ORA-04063`.
+- **Educational Dialect Hints for Oracle Queries**: Intercepts `ORA-00933` syntax errors when a query against Oracle includes `LIMIT <n>`, providing an actionable hint to use `FETCH FIRST <n> ROWS ONLY` (Oracle 12c+) or `WHERE ROWNUM <= <n>`.
+
 ### Changed
 - **Interactive Harness Selection UI**: Redesigned `db-grep install` menu with aligned tabular columns, intelligent path shortening (`~`), responsive terminal wrapping, and ANSI color-coded status badges:
   - `✓ configured` (green) for up-to-date clients.

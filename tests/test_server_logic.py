@@ -457,6 +457,62 @@ dsn = "postgres://localhost/crm"
                 self.assertEqual(len(data), 1)
                 self.assertEqual(data[0]["object_name"], "users")
 
+    def test_describe_table_compact_and_status(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.oracle.hr]
+dsn = "hr/hr@localhost/hr"
+"""
+        with self.temp_config(sample_toml):
+            # Test 1: Standard / non-compact mode with VALID status
+            mock_rows = json.dumps([
+                {"COLUMN_NAME": "EMP_ID", "DATA_TYPE": "NUMBER(10)", "NULLABLE": "N", "STATUS": "VALID"},
+                {"COLUMN_NAME": "NAME", "DATA_TYPE": "VARCHAR2(50)", "NULLABLE": "Y", "STATUS": "VALID"},
+            ])
+            with patch.object(server, "execute", return_value=mock_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc", compact=False)))
+                self.assertEqual(res["table"], "employees")
+                self.assertEqual(res["status"], "VALID")
+                self.assertNotIn("error_hint", res)
+                self.assertEqual(len(res["columns"]), 2)
+                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+
+            # Test 2: Compact mode
+            with patch.object(server, "execute", return_value=mock_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc", compact=True)))
+                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)"})
+                self.assertNotIn("nullable", res["columns"][0])
+
+            # Test 3: Object with INVALID status
+            invalid_rows = json.dumps([
+                {"COLUMN_NAME": "EMP_ID", "DATA_TYPE": "UNDEFINED", "NULLABLE": "Y", "STATUS": "INVALID"}
+            ])
+            with patch.object(server, "execute", return_value=invalid_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "broken_vw", "hr · desc")))
+                self.assertEqual(res["status"], "INVALID")
+                self.assertIn("error_hint", res)
+                self.assertIn("compilation errors", res["error_hint"])
+
+    def test_oracle_limit_error_hint(self):
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "ora@localhost/db"})
+        mock_cursor = MagicMock()
+        mock_cursor.execute.side_effect = Exception("ORA-00933: SQL command not properly ended")
+        mock_cursor.__enter__.return_value = mock_cursor
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        ora.conn = mock_conn
+
+        with self.assertRaises(Exception) as ctx:
+            ora._exec("SELECT * FROM employees LIMIT 10", ())
+
+        err_text = str(ctx.exception)
+        self.assertIn("ORA-00933", err_text)
+        self.assertIn("Hint: Oracle SQL does not support the 'LIMIT' clause", err_text)
+        self.assertIn("FETCH FIRST 10 ROWS ONLY", err_text)
+
+
 
 if __name__ == "__main__":
     unittest.main()
