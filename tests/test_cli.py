@@ -27,7 +27,7 @@ class TestCli(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         self.assertIn("server (s)", res.stdout)
         self.assertIn("monitor (m)", res.stdout)
-        self.assertIn("test (t)", res.stdout)
+        self.assertIn("ping (p)", res.stdout)
         self.assertIn("config (c)", res.stdout)
         self.assertIn("install (i)", res.stdout)
         self.assertIn("update (u)", res.stdout)
@@ -45,6 +45,10 @@ class TestCli(unittest.TestCase):
         res_cfg = self.run_cli(["config", "--help"])
         self.assertEqual(res_cfg.returncode, 0)
         self.assertIn("config [-h] [ACTION ...]", res_cfg.stdout)
+
+        res_ping = self.run_cli(["ping", "--help"])
+        self.assertEqual(res_ping.returncode, 0)
+        self.assertIn("ping [-h] [DB ...]", res_ping.stdout)
 
     def test_shorthand_flags_work(self):
         # -v
@@ -87,7 +91,7 @@ class TestCli(unittest.TestCase):
         from cli import normalize_cli_args
         self.assertEqual(normalize_cli_args(["-s"]), ["server"])
         self.assertEqual(normalize_cli_args(["-m"]), ["monitor"])
-        self.assertEqual(normalize_cli_args(["-t", "all"]), ["test", "all"])
+        self.assertEqual(normalize_cli_args(["-p", "all"]), ["ping", "all"])
         self.assertEqual(normalize_cli_args(["-c", "list"]), ["config", "list"])
         self.assertEqual(normalize_cli_args(["-i", "codex"]), ["install", "codex"])
         self.assertEqual(normalize_cli_args(["-u"]), ["update"])

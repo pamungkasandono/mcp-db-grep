@@ -115,7 +115,7 @@ def run_check_connection_cli(targets: list[str] | str):
 
     # If no targets passed, enter interactive selection
     if not target_list:
-        print("\n--- db-grep Interactive Connection Check ---")
+        print("\n--- db-grep Interactive Database Ping ---")
         print("Available Databases:")
         for idx, key in enumerate(db_keys, start=1):
             desc = all_dbs[key].get("description", "")
@@ -126,7 +126,7 @@ def run_check_connection_cli(targets: list[str] | str):
         print("  [q] quit                      - Cancel")
 
         try:
-            choice = input("\nSelect database to test [default: all, e.g. 1, 1,3, 1-3, or 'all']: ").strip()
+            choice = input("\nSelect database to ping [default: all, e.g. 1, 1,3, 1-3, or 'all']: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nCancelled.")
             sys.exit(0)
@@ -144,7 +144,7 @@ def run_check_connection_cli(targets: list[str] | str):
             target_list = [db_keys[i] for i in indices]
 
     results = server.execute_connection_check(target_list, all_dbs=all_dbs)
-    print(f"\nChecking {len(results)} database connection(s)...")
+    print(f"\nPinging {len(results)} database connection(s)...")
     has_failure = _print_connection_results(results)
 
     failed_legacy_oracle = [
@@ -159,7 +159,7 @@ def run_check_connection_cli(targets: list[str] | str):
                 ans = input("Would you like db-grep to download the Oracle Instant Client driver now? [Y/n]: ").strip().lower()
                 if ans in ("", "y", "yes"):
                     if driver_manager.install_driver("oracle"):
-                        print("\nRe-testing Oracle connections...")
+                        print("\nRe-pinging Oracle connections...")
                         retry_results = server.execute_connection_check(failed_legacy_oracle, all_dbs=all_dbs)
                         has_failure = _print_connection_results(retry_results)
             except (KeyboardInterrupt, EOFError):
@@ -171,7 +171,7 @@ def run_check_connection_cli(targets: list[str] | str):
 
 def normalize_cli_args(args: list[str]) -> list[str]:
     """
-    Normalizes lowercase shorthand flags (-s, -m, -t, -c, -i, -u, -d) to their respective subcommands.
+    Normalizes lowercase shorthand flags (-s, -m, -p, -c, -i, -u, -d) to their respective subcommands.
     Eliminates risky case-sensitivity traps (-c vs -C, -u vs -U).
     """
     if not args:
@@ -185,8 +185,8 @@ def normalize_cli_args(args: list[str]) -> list[str]:
         "--server": ["server"],
         "-m": ["monitor"],
         "--monitor": ["monitor"],
-        "-t": ["test"],
-        "--test": ["test"],
+        "-p": ["ping"],
+        "--ping": ["ping"],
         "-c": ["config"],
         "--config": ["config"],
         "-i": ["install"],
@@ -231,13 +231,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run interactive terminal approval monitor to review and approve/reject queries",
     )
 
-    # test (aliases: t)
-    p_test = subparsers.add_parser(
-        "test",
-        aliases=["t"],
-        help="Test physical database connectivity & latency (pass database names or omit for interactive menu)",
+    # ping (aliases: p)
+    p_ping = subparsers.add_parser(
+        "ping",
+        aliases=["p"],
+        help="Ping databases to verify connectivity & measure latency (pass database names or omit for interactive menu)",
     )
-    p_test.add_argument(
+    p_ping.add_argument(
         "targets",
         nargs="*",
         metavar="DB",
@@ -336,7 +336,7 @@ def main():
         import monitor
         monitor.start()
 
-    elif cmd in ("test", "t"):
+    elif cmd in ("ping", "p"):
         import driver_manager
         driver_manager.ensure_driver_env()
         run_check_connection_cli(args.targets)

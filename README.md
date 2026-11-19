@@ -168,24 +168,24 @@ Never hardcode production passwords. `db-grep` resolves secrets on-demand withou
 ### Check Configuration (`config.toml`)
 Verify file permissions, syntax, required fields, and environment variables:
 ```bash
-db-grep config check           # or shorthand: db-grep -C
+db-grep config check           # or shorthand: db-grep -c check
 ```
 *(Also available as AI MCP tool `check_config`)*
 
-### Check Physical Database Connectivity
-Test database handshake and latency using lightweight ping queries (`SELECT 1;` for Postgres/MySQL, `SELECT 1 FROM DUAL` for Oracle):
+### Ping Physical Database Connectivity
+Ping database handshake and measure latency using lightweight queries (`SELECT 1;` for Postgres/MySQL, `SELECT 1 FROM DUAL` for Oracle):
 ```bash
 # Interactive selection (supports 1, 1,3, 1-3, or 'all'):
-db-grep test                   # or shorthand: db-grep -t
+db-grep ping                   # or shorthand: db-grep -p
 
 # Non-interactive CLI:
-db-grep test all
-db-grep test ecommerce-dev
-db-grep test inventory-core                       # runs all drivers matching 'inventory-core'
-db-grep test postgres:inventory-core oracle:payroll-prod
-db-grep test pgsql:inventory-core ora:payroll-prod my:orders-app
+db-grep ping all
+db-grep ping ecommerce-dev
+db-grep ping inventory-core                       # pings all drivers matching 'inventory-core'
+db-grep ping postgres:inventory-core oracle:payroll-prod
+db-grep ping pgsql:inventory-core ora:payroll-prod my:orders-app
 ```
-*(Passing a short name without prefix checks all matching databases across drivers; use `postgres:<name>` / `pgsql:<name>`, `oracle:<name>` / `ora:<name>`, or `mysql:<name>` / `my:<name>` to target a specific driver. Also available as AI MCP tool `check_connection(db="all")`, without interactive monitor approval).*
+*(Passing a short name without prefix pings all matching databases across drivers; use `postgres:<name>` / `pgsql:<name>`, `oracle:<name>` / `ora:<name>`, or `mysql:<name>` / `my:<name>` to target a specific driver. Also available as AI MCP tool `check_connection(db="all")`, without interactive monitor approval).*
 
 ---
 
