@@ -87,7 +87,16 @@ def run_check_config_cli():
         print("\nResult: Configuration is VALID.\n")
         sys.exit(0)
     else:
-        print("\nResult: Configuration is INVALID. Please correct the errors above.\n")
+        print("\nResult: Configuration is INVALID. Please correct the errors above.")
+        import config_manager
+        if config_manager.CONFIG.exists():
+            try:
+                legacy = config_manager.detect_legacy_keys(config_manager.CONFIG.read_text(encoding="utf-8"))
+                if legacy:
+                    print(f"\n💡 Hint: Found {len(legacy)} legacy key(s) ({', '.join(legacy)}). Run 'db-grep config migrate' to auto-upgrade.")
+            except Exception:
+                pass
+        print()
         sys.exit(1)
 
 
@@ -220,6 +229,15 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
         help="Show program's version number and exit",
     )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        "-f",
+        "--force",
+        action="store_true",
+        dest="yes",
+        help="Automatic yes to prompts",
+    )
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
@@ -254,7 +272,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_cfg = subparsers.add_parser(
         "config",
         aliases=["c"],
-        help="Manage databases in config.toml (subcommands: list, add, check, edit, disable, enable, delete)",
+        help="Manage databases in config.toml (subcommands: list, add, check, migrate, edit, disable, enable, delete)",
+    )
+    p_cfg.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        dest="yes",
+        help="Automatic yes to prompts",
     )
     p_cfg.add_argument(
         "action",
@@ -382,11 +407,14 @@ def main():
                     config_manager.delete_entry(cfg_args[1], confirm=False)
             elif sub == "add":
                 config_manager.prompt_add_interactive()
+            elif sub in ("migrate", "upgrade"):
+                auto_yes = "-y" in cfg_args or "--yes" in cfg_args or getattr(args, "yes", False)
+                config_manager.migrate_config_file(interactive=not auto_yes)
             elif sub in ("view", "edit"):
                 config_manager.view_raw_config()
             else:
                 print(f"Unknown config command: {sub}")
-                print("Available commands: list, add, check, disable, enable, delete, edit")
+                print("Available commands: list, add, check, migrate, disable, enable, delete, edit")
                 sys.exit(1)
 
     elif cmd in ("install", "i"):

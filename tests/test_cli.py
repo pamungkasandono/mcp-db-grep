@@ -44,7 +44,7 @@ class TestCli(unittest.TestCase):
 
         res_cfg = self.run_cli(["config", "--help"])
         self.assertEqual(res_cfg.returncode, 0)
-        self.assertIn("config [-h] [ACTION ...]", res_cfg.stdout)
+        self.assertIn("config [-h] [-y] [ACTION ...]", res_cfg.stdout)
 
         res_ping = self.run_cli(["ping", "--help"])
         self.assertEqual(res_ping.returncode, 0)
@@ -100,6 +100,27 @@ class TestCli(unittest.TestCase):
     def test_invalid_argument_fails(self):
         res = self.run_cli(["--invalid-argument-xyz"])
         self.assertNotEqual(res.returncode, 0)
+
+    def test_config_migrate_cli(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        legacy_sample = """[defaults]\nread_metadata = true\n"""
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as tmp:
+            tmp.write(legacy_sample)
+            tmp_path = Path(tmp.name)
+
+        try:
+            env = dict(os.environ, DB_GREP_CONFIG=str(tmp_path))
+            cmd = [sys.executable, "cli.py", "config", "migrate", "-y"]
+            res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("Successfully migrated", res.stdout)
+            self.assertIn('allow_metadata = ["read"]', tmp_path.read_text(encoding="utf-8"))
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            tmp_path.with_suffix(".toml.bak").unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -251,6 +251,65 @@ dsn = "mysql://localhost/inv"
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    def test_detect_and_migrate_legacy_config(self):
+        legacy_sample = """[monitor]
+port = 48260
+
+[defaults]
+read_metadata = true # list_tables without y/n
+read_data = false
+
+[db.postgres.corp]
+dsn = "postgres://localhost/corp"
+auto_metadata = false # override
+auto_tables = ["departments", "public_*"]
+always_ask_tables = ["pegawai_salary", "user_identity"]
+sensitive_columns = ["salary*", "nik", "password_hash"]
+"""
+        detected = config_manager.detect_legacy_keys(legacy_sample)
+        self.assertIn("read_metadata", detected)
+        self.assertIn("read_data", detected)
+        self.assertIn("auto_metadata", detected)
+        self.assertIn("auto_tables", detected)
+        self.assertIn("always_ask_tables", detected)
+        self.assertIn("sensitive_columns", detected)
+
+        migrated_content, changes = config_manager.migrate_config_content(legacy_sample)
+        self.assertIn('allow_metadata = ["read"] # list_tables without y/n', migrated_content)
+        self.assertIn('allow_data = []', migrated_content)
+        self.assertIn('allow_metadata = [] # override', migrated_content)
+        self.assertIn('allow_tables = ["departments", "public_*"]', migrated_content)
+        self.assertIn('restricted_tables = ["pegawai_salary", "user_identity"]', migrated_content)
+        self.assertIn('restricted_columns = ["salary*", "nik", "password_hash"]', migrated_content)
+        self.assertNotIn("read_metadata", migrated_content)
+        self.assertNotIn("auto_tables", migrated_content)
+
+        # Full file migration with backup
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False, encoding="utf-8") as tmp:
+            tmp.write(legacy_sample)
+            tmp_path = Path(tmp.name)
+
+        try:
+            with patch.object(config_manager, "CONFIG", tmp_path):
+                ok = config_manager.migrate_config_file(interactive=False)
+                self.assertTrue(ok)
+
+                # Check backup exists and contains original
+                bak_path = tmp_path.with_suffix(".toml.bak")
+                self.assertTrue(bak_path.exists())
+                self.assertEqual(bak_path.read_text(encoding="utf-8"), legacy_sample)
+
+                # Check migrated file
+                new_file_content = tmp_path.read_text(encoding="utf-8")
+                self.assertEqual(new_file_content, migrated_content)
+
+                # Re-running migration when already up to date succeeds
+                ok_again = config_manager.migrate_config_file(interactive=False)
+                self.assertTrue(ok_again)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            tmp_path.with_suffix(".toml.bak").unlink(missing_ok=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -312,6 +312,15 @@ def execute_upgrade() -> bool:
     res = subprocess.run(cmd)
     if res.returncode == 0:
         print("\n✓ db-grep successfully upgraded! Restart your terminal or clients to use the new version.")
+        try:
+            import config_manager
+            if config_manager.CONFIG.exists():
+                legacy = config_manager.detect_legacy_keys(config_manager.CONFIG.read_text(encoding="utf-8"))
+                if legacy:
+                    print(f"\n⚠ Detected legacy configuration keys in {config_manager.CONFIG}: {', '.join(legacy)}")
+                    config_manager.migrate_config_file(interactive=True)
+        except Exception:
+            pass
         return True
     else:
         print(f"\n✗ Upgrade failed with exit code {res.returncode}. You can manually run:")

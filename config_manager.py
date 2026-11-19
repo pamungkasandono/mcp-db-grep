@@ -288,6 +288,114 @@ def add_allow_tables(target: str, tables: list[str]) -> bool:
 add_auto_tables = add_allow_tables
 
 
+# ---------------- Config Migration Utilities (v0.7.x -> v0.8.0+) ----------------
+
+LEGACY_KEY_PATTERNS = [
+    (re.compile(r"^(\s*)(?:read_metadata|auto_metadata)\s*=\s*true(\s*(?:#.*)?)$", re.IGNORECASE), r'\1allow_metadata = ["read"]\2'),
+    (re.compile(r"^(\s*)(?:read_metadata|auto_metadata)\s*=\s*false(\s*(?:#.*)?)$", re.IGNORECASE), r'\1allow_metadata = []\2'),
+    (re.compile(r"^(\s*)read_data\s*=\s*true(\s*(?:#.*)?)$", re.IGNORECASE), r'\1allow_data = ["read"]\2'),
+    (re.compile(r"^(\s*)read_data\s*=\s*false(\s*(?:#.*)?)$", re.IGNORECASE), r'\1allow_data = []\2'),
+    (re.compile(r"^(\s*)auto_tables\s*=", re.IGNORECASE), r'\1allow_tables ='),
+    (re.compile(r"^(\s*)always_ask_tables\s*=", re.IGNORECASE), r'\1restricted_tables ='),
+    (re.compile(r"^(\s*)sensitive_columns\s*=", re.IGNORECASE), r'\1restricted_columns ='),
+]
+
+LEGACY_KEY_NAMES = {
+    "read_metadata", "auto_metadata", "read_data",
+    "auto_tables", "always_ask_tables", "sensitive_columns",
+}
+
+
+def detect_legacy_keys(content: str) -> list[str]:
+    """Return list of legacy configuration keys found in content."""
+    detected = set()
+    for line in content.splitlines():
+        line_clean = line.strip()
+        if not line_clean or line_clean.startswith("#"):
+            continue
+        key = line_clean.split("=", 1)[0].strip()
+        if key in LEGACY_KEY_NAMES:
+            detected.add(key)
+    return sorted(detected)
+
+
+def migrate_config_content(content: str) -> tuple[str, list[tuple[str, str]]]:
+    """Transform legacy configuration lines to v0.8.0 format while preserving comments."""
+    lines = content.splitlines(keepends=True)
+    new_lines = []
+    changes = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+
+        migrated_line = line
+        for pat, repl in LEGACY_KEY_PATTERNS:
+            if pat.search(line):
+                migrated_line = pat.sub(repl, line)
+                changes.append((line.strip(), migrated_line.strip()))
+                break
+        new_lines.append(migrated_line)
+
+    return "".join(new_lines), changes
+
+
+def migrate_config_file(interactive: bool = True) -> bool:
+    """Migrate config.toml from legacy format to v0.8.0 format."""
+    if not CONFIG.exists():
+        print(f"Config file not found: {CONFIG}")
+        return False
+
+    content = CONFIG.read_text(encoding="utf-8")
+    legacy_keys = detect_legacy_keys(content)
+    if not legacy_keys:
+        print(f"✓ {CONFIG} is already up to date (no legacy keys detected).")
+        return True
+
+    print(f"\nDetected {len(legacy_keys)} legacy key(s) in {CONFIG}:")
+    for k in legacy_keys:
+        print(f"  - {k}")
+
+    if interactive:
+        try:
+            choice = input("\nMigrate configuration to v0.8.0 format? [Y/n]: ").strip().lower()
+            if choice not in ("", "y", "yes"):
+                print("Migration cancelled.")
+                return False
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
+            return False
+
+    migrated_content, changes = migrate_config_content(content)
+
+    # 1. Backup existing config
+    bak_path = CONFIG.with_suffix(".toml.bak")
+    try:
+        bak_path.write_text(content, encoding="utf-8")
+        if os.name == "posix":
+            bak_path.chmod(0o600)
+    except Exception as e:
+        print(f"Error creating backup {bak_path}: {e}")
+        return False
+
+    # 2. Save migrated config
+    try:
+        CONFIG.write_text(migrated_content, encoding="utf-8")
+        if os.name == "posix":
+            CONFIG.chmod(0o600)
+    except Exception as e:
+        print(f"Error writing migrated config {CONFIG}: {e}")
+        return False
+
+    print(f"\n✓ Successfully migrated {CONFIG} to v0.8.0 format:")
+    for old_val, new_val in changes:
+        print(f"  • {old_val}  →  {new_val}")
+    print(f"✓ Backup created at {bak_path}\n")
+    return True
+
+
 DEFAULT_DSNS = {
     "postgres": "postgres://ro_user:password@localhost:5432/dbname",
     "oracle": "localhost:1521/ORCL",
@@ -463,15 +571,20 @@ def run_interactive_dashboard():
                         reason = f" # [DISABLED: {e.reason}]" if e.reason else " # [DISABLED]"
                         print(f"  [{idx}] {e.key:<28}{reason}")
 
+        has_legacy = bool(detect_legacy_keys(CONFIG.read_text(encoding="utf-8"))) if CONFIG.exists() else False
+
         print("\nActions:")
         print("  [1-N] Toggle active/disabled")
         print("  [a]   Add new database")
         print("  [d]   Delete database")
+        if has_legacy:
+            print("  [m]   Migrate legacy config to v0.8.0")
         print("  [v]   Open in editor / view raw")
         print("  [q]   Quit")
 
+        prompt_opts = "1-N, a, d, m, v, q" if has_legacy else "1-N, a, d, v, q"
         try:
-            choice = input("\nSelect option [1-N, a, d, v, q]: ").strip().lower()
+            choice = input(f"\nSelect option [{prompt_opts}]: ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting.")
             break
@@ -497,6 +610,8 @@ def run_interactive_dashboard():
                     print("Invalid index.")
             elif target_in:
                 delete_entry(target_in, confirm=True)
+        elif choice == "m":
+            migrate_config_file(interactive=True)
         elif choice in ("v", "e"):
             view_raw_config()
         else:

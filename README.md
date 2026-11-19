@@ -65,6 +65,7 @@ You can inspect, enable, disable, or delete databases anytime via the interactiv
 db-grep config                 # open interactive configuration dashboard (or: db-grep -c)
 db-grep config list            # list all active and disabled databases
 db-grep config check           # validate configuration syntax & credentials
+db-grep config migrate         # auto-upgrade legacy config.toml to latest schema
 db-grep config disable inventory-core "maintenance window"
 db-grep config enable inventory-core
 db-grep config delete old-service

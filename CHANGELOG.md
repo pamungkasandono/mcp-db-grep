@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-19
+
+### Added
+- **Automated Configuration Migration Tool (`db-grep config migrate`)**:
+  - Automatically detects and migrates legacy pre-v0.8.0 configuration keys (`read_metadata`, `auto_metadata`, `read_data`, `auto_tables`, `always_ask_tables`, `sensitive_columns`) to the modern capability list schema (`allow_metadata`, `allow_data`, `allow_tables`, `restricted_tables`, `restricted_columns`).
+  - Safe in-place migration that preserves user comments, formatting, and indentation.
+  - Automatically creates a backup (`config.toml.bak`) with strict POSIX permissions (`0o600`) before applying any modifications.
+  - Interactive integration in `db-grep update`: prompts user to auto-migrate legacy configs immediately after a package upgrade.
+  - Smart hints in `db-grep config check`: displays actionable migration tips when legacy keys are detected.
+  - Interactive migration option (`[m]`) directly in the `db-grep config` interactive dashboard.
+
 ## [0.8.0] - 2026-11-19
 
 ### Changed
