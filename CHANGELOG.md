@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Single Source of Truth (SSOT) Versioning**: Standardized version management so `pyproject.toml` is the sole source of truth; `updater.get_current_version()` now dynamically resolves the version from `pyproject.toml` via `tomllib` during development and falls back to package distribution metadata when installed.
+
 ## [0.5.1] - 2026-11-19
 
 ### Fixed
