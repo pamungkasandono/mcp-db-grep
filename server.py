@@ -681,7 +681,7 @@ class Oracle(DB):
                 raise oracledb.DatabaseError(
                     f"{e}\n"
                     "Tip: Database uses legacy Oracle 10g authentication. "
-                    "Run 'db-grep --setup-driver oracle' to automatically download and configure the driver."
+                    "Run 'db-grep driver oracle' to automatically download and configure the driver."
                 ) from e
             raise
 
@@ -918,7 +918,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
                 f"Target Database: {d.name}\n"
                 f"Requested Action: {context}\n"
                 f"SQL: {sql}\n\n"
-                f"The database monitor (`db-grep --monitor`) must be opened in another terminal to review and approve this action."
+                f"The database monitor (`db-grep monitor`) must be opened in another terminal to review and approve this action."
             )
 
         msg = {"tool": tool, "db": d.name, "db_type": d.cfg.get("type", ""), "context": context, "sql": sql}

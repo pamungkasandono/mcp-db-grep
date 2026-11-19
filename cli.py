@@ -171,32 +171,14 @@ def run_check_connection_cli(targets: list[str] | str):
 
 def normalize_cli_args(args: list[str]) -> list[str]:
     """
-    Normalizes legacy flags and shorthands to subcommands.
-    Allows zero-overhead dispatching while keeping full backward compatibility.
+    Normalizes lowercase shorthand flags (-s, -m, -t, -c, -i, -u, -d) to their respective subcommands.
+    Eliminates risky case-sensitivity traps (-c vs -C, -u vs -U).
     """
     if not args:
         return []
 
-    # Extract -a / --client if present
-    client_val = None
-    cleaned = []
-    i = 0
-    while i < len(args):
-        if args[i] in ("-a", "--client") and i + 1 < len(args):
-            client_val = args[i + 1]
-            i += 2
-        elif args[i].startswith("--client="):
-            client_val = args[i].split("=", 1)[1]
-            i += 1
-        else:
-            cleaned.append(args[i])
-            i += 1
-
-    if not cleaned:
-        return ["install", client_val] if client_val else []
-
-    first = cleaned[0]
-    rest = cleaned[1:]
+    first = args[0]
+    rest = args[1:]
 
     FLAG_MAP = {
         "-s": ["server"],
@@ -205,34 +187,19 @@ def normalize_cli_args(args: list[str]) -> list[str]:
         "--monitor": ["monitor"],
         "-t": ["test"],
         "--test": ["test"],
-        "--check-connection": ["test"],
         "-c": ["config"],
         "--config": ["config"],
-        "-C": ["config", "check"],
-        "--check-config": ["config", "check"],
         "-i": ["install"],
-        "--init": ["install"],
         "--install": ["install"],
-        "init": ["install"],
         "-u": ["update"],
         "--update": ["update"],
-        "--check-update": ["update"],
-        "-U": ["update", "-y"],
-        "--upgrade": ["update", "-y"],
-        "--setup-driver": ["driver"],
+        "-d": ["driver"],
         "--driver": ["driver"],
     }
 
     if first in FLAG_MAP:
-        res = list(FLAG_MAP[first]) + rest
-    else:
-        res = cleaned
-
-    if client_val and res and res[0] in ("install", "i"):
-        if len(res) == 1:
-            res.append(client_val)
-
-    return res
+        return list(FLAG_MAP[first]) + rest
+    return args
 
 
 def build_parser() -> argparse.ArgumentParser:

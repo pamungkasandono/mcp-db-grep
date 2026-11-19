@@ -64,7 +64,7 @@ class TestInstaller(unittest.TestCase):
                 self.assertIn('model = "gpt-4o"', content)
                 self.assertIn("[mcp_servers.db-grep]", content)
                 self.assertIn('command = "db-grep"', content)
-                self.assertIn('args = ["--server"]', content)
+                self.assertIn('args = ["server"]', content)
             finally:
                 installer.get_codex_config_path = original_fn
 
@@ -98,24 +98,24 @@ class TestInstaller(unittest.TestCase):
 
                 claude_servers = installer.read_json_file(claude_cfg)["mcpServers"]
                 self.assertNotIn("db", claude_servers)
-                self.assertEqual(claude_servers["db-grep"], {"command": "db-grep", "args": ["--server"]})
+                self.assertEqual(claude_servers["db-grep"], {"command": "db-grep", "args": ["server"]})
 
                 roo_servers = installer.read_json_file(roo_cfg)["mcpServers"]
                 self.assertIn("db", roo_servers)  # unrelated 'db' preserved
                 self.assertEqual(
                     roo_servers["db-grep"],
-                    {"command": "db-grep", "args": ["--server"], "disabled": False, "autoApprove": []},
+                    {"command": "db-grep", "args": ["server"], "disabled": False, "autoApprove": []},
                 )
 
                 self.assertEqual(
                     installer.read_json_file(zed_cfg)["context_servers"]["db-grep"],
-                    {"command": {"path": "db-grep", "args": ["--server"]}},
+                    {"command": {"path": "db-grep", "args": ["server"]}},
                 )
 
                 opencode_mcp = installer.read_json_file(opencode_cfg)["mcp"]
                 self.assertEqual(
                     opencode_mcp["db-grep"],
-                    {"type": "local", "command": ["db-grep", "--server"], "enabled": True},
+                    {"type": "local", "command": ["db-grep", "server"], "enabled": True},
                 )
             finally:
                 installer.get_claude_desktop_config_path = orig_claude

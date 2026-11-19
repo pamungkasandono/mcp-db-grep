@@ -89,13 +89,9 @@ class TestCli(unittest.TestCase):
         self.assertEqual(normalize_cli_args(["-m"]), ["monitor"])
         self.assertEqual(normalize_cli_args(["-t", "all"]), ["test", "all"])
         self.assertEqual(normalize_cli_args(["-c", "list"]), ["config", "list"])
-        self.assertEqual(normalize_cli_args(["-C"]), ["config", "check"])
         self.assertEqual(normalize_cli_args(["-i", "codex"]), ["install", "codex"])
-        self.assertEqual(normalize_cli_args(["-i", "-a", "claude"]), ["install", "claude"])
         self.assertEqual(normalize_cli_args(["-u"]), ["update"])
-        self.assertEqual(normalize_cli_args(["-U"]), ["update", "-y"])
-        self.assertEqual(normalize_cli_args(["--upgrade"]), ["update", "-y"])
-        self.assertEqual(normalize_cli_args(["--setup-driver", "oracle"]), ["driver", "oracle"])
+        self.assertEqual(normalize_cli_args(["-d", "oracle"]), ["driver", "oracle"])
 
     def test_invalid_argument_fails(self):
         res = self.run_cli(["--invalid-argument-xyz"])

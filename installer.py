@@ -9,7 +9,7 @@ from pathlib import Path
 DEFAULT_INSTRUCTIONS = """# Database MCP (`db-grep`) Handling Rules
 
 ## Case 1: When any tool from `db-grep` server returns `MONITOR_OFFLINE`
-This happens when the terminal monitor (`db-grep --monitor`) is not running.
+This happens when the terminal monitor (`db-grep monitor`) is not running.
 
 1. **ANTI-BYPASS STRICT RULE (DO NOT VIOLATE)**:
    - **DO NOT** attempt to read database credentials from `.env`, configuration files, or source code.
@@ -18,12 +18,12 @@ This happens when the terminal monitor (`db-grep --monitor`) is not running.
 
 2. **Notify User Clearly**:
    - Inform the user that the query was paused because the approval monitor is offline:
-     "Database monitor is offline. To protect your data, all queries require approval via `db-grep --monitor`."
+     "Database monitor is offline. To protect your data, all queries require approval via `db-grep monitor`."
    - State the query that was about to run and the target database.
 
 3. **Prompt User Next Step**:
    - Use the `question` tool (or prompt choice) to ask user:
-     - "I have started `db-grep --monitor` in another terminal, retry query"
+     - "I have started `db-grep monitor` in another terminal, retry query"
      - "Cancel and continue without database query"
 
 ---
@@ -146,7 +146,7 @@ def get_pi_config_path() -> Path:
 
 
 MCP_SERVER_NAME = "db-grep"
-STD_MCP_ENTRY = {"command": "db-grep", "args": ["--server"]}
+STD_MCP_ENTRY = {"command": "db-grep", "args": ["server"]}
 
 
 def _detect_path_or_bin(cfg: Path, binary: str | None = None, check_parent: bool = True) -> bool:
@@ -157,7 +157,7 @@ def _is_legacy_db_grep_entry(val: object) -> bool:
     if not isinstance(val, dict):
         return False
     cmd = val.get("command")
-    if cmd == "db-grep" or cmd == ["db-grep", "--server"]:
+    if cmd == "db-grep" or cmd in (["db-grep", "--server"], ["db-grep", "server"]):
         return True
     if isinstance(cmd, dict) and cmd.get("path") == "db-grep":
         return True
@@ -190,7 +190,7 @@ def install_claude_cli(_instructions_file: Path):
         subprocess.run(["claude", "mcp", "remove", "db"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["claude", "mcp", "remove", MCP_SERVER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         res = subprocess.run(
-            ["claude", "mcp", "add", MCP_SERVER_NAME, "--", "db-grep", "--server"],
+            ["claude", "mcp", "add", MCP_SERVER_NAME, "--", "db-grep", "server"],
             capture_output=True,
             text=True,
         )
@@ -233,7 +233,7 @@ def install_opencode(instructions_file: Path):
         mcp.pop("db", None)
     mcp[MCP_SERVER_NAME] = {
         "type": "local",
-        "command": ["db-grep", "--server"],
+        "command": ["db-grep", "server"],
         "enabled": True,
     }
     data["mcp"] = mcp
@@ -271,19 +271,22 @@ def install_codex(_instructions_file: Path):
     content = cfg_file.read_text(encoding="utf-8") if cfg_file.exists() else ""
 
     if "[mcp_servers.db-grep]" in content:
-        # Already configured
+        # Update legacy --server args if present
+        if 'args = ["--server"]' in content:
+            updated = content.replace('args = ["--server"]', 'args = ["server"]')
+            cfg_file.write_text(updated, encoding="utf-8")
         print(f"  ✓ Codex already configured: {cfg_file}")
         return
 
     # Migrate legacy [mcp_servers.db] belonging to db-grep
     legacy_re = re.compile(r'\[mcp_servers\.db\]\s*\n\s*command\s*=\s*"db-grep"')
     if legacy_re.search(content):
-        updated = legacy_re.sub('[mcp_servers.db-grep]\ncommand = "db-grep"', content, count=1)
+        updated = legacy_re.sub('[mcp_servers.db-grep]\ncommand = "db-grep"\nargs = ["server"]', content, count=1)
         cfg_file.write_text(updated, encoding="utf-8")
         print(f"  ✓ Migrated Codex MCP entry to 'db-grep': {cfg_file}")
         return
 
-    entry = '\n[mcp_servers.db-grep]\ncommand = "db-grep"\nargs = ["--server"]\n'
+    entry = '\n[mcp_servers.db-grep]\ncommand = "db-grep"\nargs = ["server"]\n'
     updated = (content.rstrip() + "\n" + entry).lstrip()
     cfg_file.write_text(updated, encoding="utf-8")
     print(f"  ✓ Configured Codex: {cfg_file}")
@@ -312,7 +315,7 @@ def install_zed(_instructions_file: Path):
         get_zed_config_path(),
         "Zed Editor",
         section_key="context_servers",
-        entry={"command": {"path": "db-grep", "args": ["--server"]}},
+        entry={"command": {"path": "db-grep", "args": ["server"]}},
     )
 
 

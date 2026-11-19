@@ -3,11 +3,11 @@ default:
 
 # Run monitor UI
 monitor:
-    db-grep --monitor
+    db-grep monitor
 
 # Run MCP server directly (stdio)
 server:
-    db-grep --server
+    db-grep server
 
 # Install dependencies into .venv
 install:

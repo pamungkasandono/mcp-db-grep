@@ -324,7 +324,7 @@ def download_and_install_driver() -> Path:
 
 
 def setup_oracle_driver_cli() -> bool:
-    """CLI handler for Oracle driver setup via db-grep --setup-driver oracle."""
+    """CLI handler for Oracle driver setup via db-grep driver oracle."""
     print("--- db-grep Oracle Instant Client Setup ---")
     current = find_oracle_client_dir()
     if current:

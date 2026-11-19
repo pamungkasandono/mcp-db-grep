@@ -141,7 +141,7 @@ def resolve_entry(target: str, entries: list[ConfigEntry]) -> ConfigEntry | None
         names = ", ".join(e.key for e in matches)
         print(
             f"Found {len(matches)} databases named '{t}': {names}\n"
-            f"Please be specific, e.g.: db-grep --config disable {matches[0].key}"
+            f"Please be specific, e.g.: db-grep config disable {matches[0].key}"
         )
         return None
 

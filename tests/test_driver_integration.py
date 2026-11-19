@@ -91,7 +91,7 @@ class TestDriverDeepIntegration(unittest.TestCase):
                 oracle_db.connect()
 
             self.assertIn("DPY-3015", str(ctx.exception))
-            self.assertIn("db-grep --setup-driver oracle", str(ctx.exception))
+            self.assertIn("db-grep driver oracle", str(ctx.exception))
 
     def test_server_oracle_connect_non_dpy3015_passthrough(self):
         """Verify that other Oracle errors (e.g. ORA-01017) are re-raised without tip."""
@@ -105,7 +105,7 @@ class TestDriverDeepIntegration(unittest.TestCase):
                 oracle_db.connect()
 
             self.assertIn("ORA-01017", str(ctx.exception))
-            self.assertNotIn("db-grep --setup-driver", str(ctx.exception))
+            self.assertNotIn("db-grep driver", str(ctx.exception))
 
     def test_zip_slip_security_mitigation(self):
         """Verify that archives with path traversal elements (Zip Slip) do not escape destination directory."""
@@ -167,9 +167,9 @@ class TestDriverDeepIntegration(unittest.TestCase):
         self.assertEqual(config_manager.normalize_db_token("postgres:direct"), "postgres:direct")
 
     def test_cli_subprocess_setup_driver_status(self):
-        """Test full execution of db-grep --setup-driver via CLI."""
+        """Test full execution of db-grep driver via CLI."""
         res = subprocess.run(
-            [sys.executable, "cli.py", "--setup-driver"],
+            [sys.executable, "cli.py", "driver"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).resolve().parent.parent),
@@ -181,9 +181,9 @@ class TestDriverDeepIntegration(unittest.TestCase):
         self.assertIn("oracle", res.stdout)
 
     def test_cli_subprocess_setup_driver_invalid(self):
-        """Test that db-grep --setup-driver invalid_driver returns code 1."""
+        """Test that db-grep driver invalid_driver returns code 1."""
         res = subprocess.run(
-            [sys.executable, "cli.py", "--setup-driver", "invalid_driver_name"],
+            [sys.executable, "cli.py", "driver", "invalid_driver_name"],
             capture_output=True,
             text=True,
             cwd=str(Path(__file__).resolve().parent.parent),

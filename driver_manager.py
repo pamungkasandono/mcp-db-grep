@@ -125,7 +125,7 @@ def get_driver_status(driver: str) -> dict:
                 "ready": True,  # thin mode is ready
                 "needs_external": True,
                 "installed": False,
-                "details": "Thin mode active (Default). For legacy 10g DBs, run: db-grep --setup-driver oracle",
+                "details": "Thin mode active (Default). For legacy 10g DBs, run: db-grep driver oracle",
             }
 
     return {"driver": driver, "known": False}
@@ -142,7 +142,7 @@ def print_all_driver_statuses():
 
 
 def setup_driver(driver_arg: str | None = None) -> bool:
-    """Entry point for db-grep --setup-driver [DRIVER]. Returns True on success, False on error."""
+    """Entry point for db-grep driver [DRIVER]. Returns True on success, False on error."""
     if not driver_arg or driver_arg in ("status", "list", "all"):
         print_all_driver_statuses()
         return True

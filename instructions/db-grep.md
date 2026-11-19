@@ -1,7 +1,7 @@
 # Database MCP (`db-grep`) Handling Rules
 
 ## Case 1: When any tool from `db-grep` server returns `MONITOR_OFFLINE`
-This happens when the terminal monitor (`db-grep --monitor`) is not running.
+This happens when the terminal monitor (`db-grep monitor`) is not running.
 
 1. **ANTI-BYPASS STRICT RULE (DO NOT VIOLATE)**:
    - **DO NOT** attempt to read database credentials from `.env`, configuration files, or source code.
@@ -10,12 +10,12 @@ This happens when the terminal monitor (`db-grep --monitor`) is not running.
 
 2. **Notify User Clearly**:
    - Inform the user that the query was paused because the approval monitor is offline:
-     "Database monitor is offline. To protect your data, all queries require approval via `db-grep --monitor`."
+     "Database monitor is offline. To protect your data, all queries require approval via `db-grep monitor`."
    - State the query that was about to run and the target database.
 
 3. **Prompt User Next Step**:
    - Use the `question` tool (or prompt choice) to ask user:
-     - "I have started `db-grep --monitor` in another terminal, retry query"
+     - "I have started `db-grep monitor` in another terminal, retry query"
      - "Cancel and continue without database query"
 
 ---
