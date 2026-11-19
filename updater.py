@@ -1,14 +1,18 @@
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
+import textwrap
 import urllib.error
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 
 GITHUB_REPO = "pamungkasandono/mcp-db-grep"
 LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+RAW_CHANGELOG_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/CHANGELOG.md"
 GIT_INSTALL_URL = f"git+https://github.com/{GITHUB_REPO}.git"
 
 
@@ -16,7 +20,7 @@ def get_current_version() -> str:
     try:
         return version("db-grep")
     except PackageNotFoundError:
-        return "0.5.0"
+        return "0.5.1"
 
 
 def parse_semver(ver_str: str) -> tuple[int, int, int]:
@@ -119,6 +123,53 @@ def fetch_latest_release() -> dict:
         raise e
 
 
+def extract_changelog_between(changelog_text: str, current_ver: str, target_ver: str) -> str:
+    """Extract sections from changelog markdown for versions > current_ver and <= target_ver."""
+    curr_tuple = parse_semver(current_ver)
+    target_tuple = parse_semver(target_ver)
+
+    version_section_re = re.compile(r"^##\s+\[([^\]]+)\](?:\s+-\s+(\d{4}-\d{2}-\d{2}))?", re.MULTILINE)
+    matches = list(version_section_re.finditer(changelog_text))
+    if not matches:
+        return ""
+
+    included_sections = []
+    for i, match in enumerate(matches):
+        ver_str = match.group(1).strip()
+        if ver_str.lower() == "unreleased":
+            continue
+        try:
+            ver_tuple = parse_semver(ver_str)
+        except Exception:
+            continue
+
+        if curr_tuple < ver_tuple <= target_tuple:
+            start_pos = match.start()
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(changelog_text)
+            included_sections.append(changelog_text[start_pos:end_pos].strip())
+
+    return "\n\n".join(included_sections)
+
+
+def fetch_multi_version_changelog(current_ver: str, target_ver: str, fallback_body: str = "") -> str:
+    """Fetch remote CHANGELOG.md and extract notes for all versions > current_ver and <= target_ver."""
+    headers = {"User-Agent": "db-grep-updater"}
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(RAW_CHANGELOG_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            extracted = extract_changelog_between(text, current_ver, target_ver)
+            if extracted.strip():
+                return extracted.strip()
+    except Exception:
+        pass
+
+    return fallback_body.strip()
+
+
 def check_for_updates() -> dict:
     current = get_current_version()
     try:
@@ -132,13 +183,17 @@ def check_for_updates() -> dict:
 
         has_update = latest_tuple > curr_tuple
 
+        changelog = ""
+        if has_update:
+            changelog = fetch_multi_version_changelog(current, latest_ver, fallback_body=body)
+
         return {
             "success": True,
             "current_version": current,
             "latest_version": latest_ver,
             "tag_name": latest_tag,
             "has_update": has_update,
-            "changelog": body,
+            "changelog": changelog,
             "release_url": data.get("html_url", ""),
         }
     except Exception as e:
@@ -250,6 +305,88 @@ def execute_upgrade() -> bool:
         return False
 
 
+def render_markdown_changelog(md_text: str, max_width: int = 85) -> str:
+    """Format markdown changelog cleanly for terminal display with colors and hanging indents."""
+    if not md_text or not md_text.strip():
+        return ""
+
+    BOLD = "\033[1m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    MAGENTA = "\033[35m"
+    RESET = "\033[0m"
+
+    term_w = shutil.get_terminal_size((80, 20)).columns
+    width = max(60, min(term_w - 2, max_width))
+
+    lines = md_text.splitlines()
+    out = []
+
+    for line in lines:
+        raw = line.rstrip()
+        stripped = raw.strip()
+        if not stripped:
+            if out and out[-1] != "":
+                out.append("")
+            continue
+
+        # Version header: ## [0.5.0] - 2026-11-18
+        m_ver = re.match(r"^##\s+\[([^\]]+)\](?:\s+-\s+(\d{4}-\d{2}-\d{2}))?", stripped)
+        if m_ver:
+            ver, date = m_ver.group(1), m_ver.group(2)
+            title = f"━━ [v{ver}]" + (f" ({date}) " if date else " ")
+            bar_len = max(5, width - len(title))
+            bar = "━" * bar_len
+            out.append(f"\n{BOLD}{CYAN}{title}{bar}{RESET}")
+            continue
+
+        # Category header: ### Added / Changed / Fixed
+        m_cat = re.match(r"^###\s+(.*)", stripped)
+        if m_cat:
+            cat = m_cat.group(1).strip()
+            cat_lower = cat.lower()
+            color = GREEN if "add" in cat_lower else (YELLOW if "change" in cat_lower else MAGENTA)
+            out.append(f"  {BOLD}{color}[{cat}]{RESET}")
+            continue
+
+        # Check bullet level
+        leading_spaces = len(raw) - len(raw.lstrip())
+        is_sub = leading_spaces >= 2 or raw.startswith("  -") or raw.startswith("    -") or raw.startswith("\t-")
+        content = stripped
+
+        if content.startswith(("-", "*")):
+            content = content[1:].strip()
+            content = re.sub(r"\*\*([^*]+)\*\*", r"\033[1m\1\033[0m", content)
+            content = re.sub(r"`([^`]+)`", r"\033[33m\1\033[0m", content)
+
+            init_indent = "    • " if is_sub else "  • "
+            sub_indent = "      " if is_sub else "    "
+
+            wrapped = textwrap.fill(
+                content,
+                width=width,
+                initial_indent=init_indent,
+                subsequent_indent=sub_indent,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            out.append(wrapped)
+        else:
+            content = re.sub(r"\*\*([^*]+)\*\*", r"\033[1m\1\033[0m", content)
+            content = re.sub(r"`([^`]+)`", r"\033[33m\1\033[0m", content)
+            indent = "    " if is_sub else "  "
+            wrapped = textwrap.fill(
+                content,
+                width=width,
+                initial_indent=indent,
+                subsequent_indent=indent,
+            )
+            out.append(wrapped)
+
+    return "\n".join(out).strip()
+
+
 def run_check_update_cli(prompt_upgrade: bool = True):
     print("Checking for updates from GitHub...")
     info = check_for_updates()
@@ -267,11 +404,11 @@ def run_check_update_cli(prompt_upgrade: bool = True):
         print(f"✓ db-grep is up to date (version {curr}).")
         return
 
-    print(f"\n★ New version available: {curr} → {latest}")
+    print(f"\nNew version available: {curr} → {latest}")
     if info.get("changelog"):
         print("\nChangelog:")
-        for line in info["changelog"].strip().splitlines():
-            print(f"  {line}")
+        rendered = render_markdown_changelog(info["changelog"])
+        print(rendered)
 
     if info.get("release_url"):
         print(f"\nRelease details: {info['release_url']}")

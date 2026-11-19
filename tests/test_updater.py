@@ -31,12 +31,13 @@ class TestUpdater(unittest.TestCase):
             "html_url": "https://github.com/pamungkasandono/mcp-db-grep/releases/tag/v0.2.0",
         }
         with patch.object(updater, "fetch_latest_release", return_value=mock_data):
-            with patch.object(updater, "get_current_version", return_value="0.1.0"):
-                info = updater.check_for_updates()
-                self.assertTrue(info["success"])
-                self.assertTrue(info["has_update"])
-                self.assertEqual(info["latest_version"], "0.2.0")
-                self.assertIn("Major feature additions", info["changelog"])
+            with patch.object(updater, "fetch_multi_version_changelog", return_value="- Major feature additions"):
+                with patch.object(updater, "get_current_version", return_value="0.1.0"):
+                    info = updater.check_for_updates()
+                    self.assertTrue(info["success"])
+                    self.assertTrue(info["has_update"])
+                    self.assertEqual(info["latest_version"], "0.2.0")
+                    self.assertIn("Major feature additions", info["changelog"])
 
     def test_check_for_updates_network_failure(self):
         with patch.object(updater, "fetch_latest_release", side_effect=Exception("Network error")):
@@ -133,6 +134,72 @@ class TestUpdater(unittest.TestCase):
                     data = updater.fetch_latest_release()
                     self.assertEqual(data["tag_name"], "v0.3.0")
                     mock_git.assert_called_once()
+
+    def test_extract_changelog_between_multi_version(self):
+        sample_changelog = """# Changelog
+
+## [Unreleased]
+
+## [0.5.0] - 2026-11-18
+### Added
+- Dual-Phase monitor
+
+## [0.4.0] - 2026-11-18
+### Added
+- find_objects tool
+
+## [0.3.1] - 2026-11-18
+### Fixed
+- Rate limit handling
+
+## [0.3.0] - 2026-11-18
+### Added
+- Oracle driver management
+"""
+        # Jump from 0.3.1 to 0.5.0: should include 0.5.0 and 0.4.0, but NOT 0.3.1 or 0.3.0
+        res = updater.extract_changelog_between(sample_changelog, "0.3.1", "0.5.0")
+        self.assertIn("## [0.5.0]", res)
+        self.assertIn("Dual-Phase monitor", res)
+        self.assertIn("## [0.4.0]", res)
+        self.assertIn("find_objects tool", res)
+        self.assertNotIn("## [0.3.1]", res)
+        self.assertNotIn("Rate limit handling", res)
+        self.assertNotIn("## [0.3.0]", res)
+
+    def test_extract_changelog_between_single_version(self):
+        sample_changelog = """## [0.5.0] - 2026-11-18
+### Added
+- Feature 5
+
+## [0.4.0] - 2026-11-18
+### Added
+- Feature 4
+"""
+        res = updater.extract_changelog_between(sample_changelog, "0.4.0", "0.5.0")
+        self.assertIn("## [0.5.0]", res)
+        self.assertIn("Feature 5", res)
+        self.assertNotIn("## [0.4.0]", res)
+        self.assertNotIn("Feature 4", res)
+
+    def test_fetch_multi_version_changelog_fallback_on_network_error(self):
+        with patch("urllib.request.urlopen", side_effect=Exception("Network down")):
+            res = updater.fetch_multi_version_changelog("0.3.1", "0.5.0", fallback_body="Fallback release note")
+            self.assertEqual(res, "Fallback release note")
+
+    def test_render_markdown_changelog(self):
+        sample = """## [0.5.0] - 2026-11-18
+### Added
+- **Feature A**: description of `code_snippet`
+  - Sub-feature bullet
+"""
+        rendered = updater.render_markdown_changelog(sample, max_width=80)
+        self.assertIn("[v0.5.0]", rendered)
+        self.assertIn("[Added]", rendered)
+        self.assertIn("Feature A", rendered)
+        self.assertIn("code_snippet", rendered)
+        self.assertNotIn("`code_snippet`", rendered)  # backtick should be stripped and styled
+        self.assertNotIn("**Feature A**", rendered)   # raw ** should be stripped and styled
+        self.assertIn("• ", rendered)                # bullet point converted to •
 
 
 if __name__ == "__main__":

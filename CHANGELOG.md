@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-19
+
+### Fixed
+- **Multi-Version Changelog Aggregator**: Fixed missing release notes when users jump multiple versions during `db-grep -u` / `--check-update`. Automatically fetches the upstream `CHANGELOG.md` via CDN and extracts all intervening version release notes between the currently installed version and the target release, with seamless fallback to release body if offline.
+
+### Changed
+- **Pure-Python Terminal Markdown Renderer**: Built a zero-dependency ANSI markdown formatter in `updater.py` with cyan version divider bars, colored category badges (`[Added]`, `[Changed]`, `[Fixed]`), hanging indented bullets (`•`), auto-detected terminal width wrapping, and styled inline code/bold elements.
+
+### Removed
+- Removed the star symbol (`★`) from the update notification header.
+
 ## [0.5.0] - 2026-11-18
 
 ### Added
