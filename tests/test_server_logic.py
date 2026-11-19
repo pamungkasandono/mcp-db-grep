@@ -446,7 +446,8 @@ port = 48260
 dsn = "postgres://localhost/crm"
 """
         with self.temp_config(sample_toml):
-            with patch.object(server, "execute", return_value='[{"schema_name":"public","object_name":"users","object_type":"TABLE"}]') as mock_exec:
+            mock_ret = json.dumps({"columns": ["schema_name", "object_name", "object_type"], "rows": [["public", "users", "TABLE"]]})
+            with patch.object(server, "execute", return_value=mock_ret) as mock_exec:
                 out_str = asyncio.run(server.find_objects("crm", "crm · find users", "user", schema="public", limit=10))
                 mock_exec.assert_called_once()
                 call_args = mock_exec.call_args[0]
@@ -454,8 +455,8 @@ dsn = "postgres://localhost/crm"
                 self.assertIn("FROM information_schema.tables", call_args[3])
                 self.assertEqual(call_args[4], ("%user%", "public", 10))
                 data = json.loads(out_str)
-                self.assertEqual(len(data), 1)
-                self.assertEqual(data[0]["object_name"], "users")
+                self.assertEqual(data["columns"], ["schema_name", "object_name", "object_type"])
+                self.assertEqual(data["rows"], [["public", "users", "TABLE"]])
 
     def test_describe_table_compact_and_status(self):
         sample_toml = b"""[monitor]
@@ -565,24 +566,97 @@ port = 48260
 dsn = "postgres://localhost/crm"
 """
         with self.temp_config(sample_toml):
-            # Test sample_table tool execution
-            with patch.object(server, "execute", return_value='[{"id": 1, "code": "ABC"}]') as mock_exec:
+            # Test sample_table tool execution (returns columnar format)
+            sample_ret = json.dumps({"columns": ["id", "code"], "rows": [[1, "ABC"]]})
+            with patch.object(server, "execute", return_value=sample_ret) as mock_exec:
                 res = asyncio.run(server.sample_table("crm", "customers", "crm · preview sample", limit=5))
                 mock_exec.assert_called_once()
                 call_args = mock_exec.call_args[0]
                 self.assertEqual(call_args[0], "sample_table")
                 self.assertEqual(call_args[3], 'SELECT * FROM "customers" LIMIT %s')
                 self.assertEqual(call_args[4], (5,))
-                self.assertEqual(json.loads(res), [{"id": 1, "code": "ABC"}])
+                self.assertEqual(json.loads(res), {"columns": ["id", "code"], "rows": [[1, "ABC"]]})
 
-            # Test search_columns tool execution
-            with patch.object(server, "execute", return_value='[{"schema_name":"public","table_name":"customers","column_name":"cif_no","data_type":"text"}]') as mock_exec:
+            # Test search_columns tool execution (returns columnar format)
+            search_ret = json.dumps({
+                "columns": ["schema_name", "table_name", "column_name", "data_type"],
+                "rows": [["public", "customers", "cif_no", "text"]],
+            })
+            with patch.object(server, "execute", return_value=search_ret) as mock_exec:
                 res = asyncio.run(server.search_columns("crm", "cif*", "crm · find column", limit=10))
                 mock_exec.assert_called_once()
                 call_args = mock_exec.call_args[0]
                 self.assertEqual(call_args[0], "search_columns")
                 self.assertEqual(call_args[4], ("cif%", 10))
-                self.assertEqual(len(json.loads(res)), 1)
+                self.assertEqual(json.loads(res)["columns"], ["schema_name", "table_name", "column_name", "data_type"])
+                self.assertEqual(json.loads(res)["rows"], [["public", "customers", "cif_no", "text"]])
+
+    def test_describe_table_handles_columnar_and_legacy_list(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[db.oracle.hr]
+dsn = "hr/hr@localhost/hr"
+"""
+        with self.temp_config(sample_toml):
+            # Test with modern columnar format
+            columnar_rows = json.dumps({
+                "columns": ["COLUMN_NAME", "DATA_TYPE", "NULLABLE", "STATUS"],
+                "rows": [
+                    ["EMP_ID", "NUMBER(10)", "N", "VALID"],
+                    ["NAME", "VARCHAR2(50)", "Y", "VALID"],
+                ],
+            })
+            with patch.object(server, "execute", return_value=columnar_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc")))
+                self.assertEqual(res["table"], "employees")
+                self.assertEqual(res["status"], "VALID")
+                self.assertEqual(len(res["columns"]), 2)
+                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+
+            # Test with legacy list of dicts format
+            legacy_rows = json.dumps([
+                {"COLUMN_NAME": "EMP_ID", "DATA_TYPE": "NUMBER(10)", "NULLABLE": "N", "STATUS": "VALID"}
+            ])
+            with patch.object(server, "execute", return_value=legacy_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc")))
+                self.assertEqual(res["table"], "employees")
+                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+
+    def test_execute_returns_columnar_format(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[defaults]
+allow_metadata = ["read"]
+allow_data = ["read"]
+
+[db.postgres.crm]
+dsn = "postgres://localhost/crm"
+"""
+        with self.temp_config(sample_toml):
+            db = server.get_db("crm")
+            db.run = MagicMock(return_value=(["EMP_NUMBER", "FULL_NAME", "JOB_TITLE"], [("P01", "ANDI", "MGR"), ("P02", "BUDI", "STAFF")]))
+
+            server.link.ensure = MagicMock()
+            async def fake_ensure(timeout_sec=0):
+                return
+            server.link.ensure = fake_ensure
+
+            server.link.send = MagicMock()
+            async def fake_send(msg):
+                return
+            server.link.send = fake_send
+
+            raw_res = asyncio.run(server.execute("query", db, "crm · test", "SELECT * FROM employees"))
+            parsed = json.loads(raw_res)
+            self.assertEqual(parsed, {
+                "columns": ["EMP_NUMBER", "FULL_NAME", "JOB_TITLE"],
+                "rows": [
+                    ["P01", "ANDI", "MGR"],
+                    ["P02", "BUDI", "STAFF"],
+                ],
+            })
 
     def test_inspect_query_access_and_columns(self):
         # 1. Simple query

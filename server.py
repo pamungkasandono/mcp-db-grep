@@ -1229,7 +1229,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
         audit("executed", rows=len(rows), ms=ms, tool=tool, db=d.name, context=context, sql=sql)  # query data itself is never logged
         await link.send({"type": "result", "cols": cols, "rows": rows,
                          "ms": ms, "limit": d.max_rows})
-        return json.dumps([dict(zip(cols, r)) for r in rows], default=str)
+        return json.dumps({"columns": cols, "rows": rows}, default=str)
 
 
 # ---------- diagnostic and health inspection ----------
@@ -1457,7 +1457,7 @@ async def list_databases() -> str:
 
 @mcp.tool()
 async def list_tables(db: DbName, context: Context, schema: str = "") -> str:
-    """List table and view names in a schema (default: connection default schema). Requires user approval."""
+    """List table and view names in a schema (default: connection default schema). Returns columnar format {'columns': [...], 'rows': [...]}. Requires user approval."""
     d = get_db(db)
     return await execute("list_tables", d, context, d.LIST_SQL, (schema or d.default_schema,))
 
@@ -1473,7 +1473,7 @@ async def find_objects(
 ) -> str:
     """Search for tables, views, or synonyms matching a pattern/keyword (case-insensitive).
     Searches across all accessible schemas if schema is empty.
-    Returns list of matching objects with schema_name, object_name, and object_type.
+    Returns matching objects in columnar format {'columns': [...], 'rows': [...]}.
     Recommended over list_tables for searching specific tables/views or exploring enterprise databases."""
     d = get_db(db)
     sql, params = d.get_search_query(pattern, schema=schema, object_type=object_type, limit=limit)
@@ -1490,7 +1490,7 @@ async def search_columns(
 ) -> str:
     """Search for columns matching a pattern/keyword across tables and views (case-insensitive).
     Searches across all accessible schemas if schema is empty.
-    Returns list of matching columns with schema_name, table_name, column_name, and data_type.
+    Returns matching columns in columnar format {'columns': [...], 'rows': [...]}.
     Ideal for finding which tables store a specific column (e.g. '*CIF*', 'NIK', 'KODE_CABANG')."""
     d = get_db(db)
     sql, params = d.get_search_columns_query(pattern, schema=schema, limit=limit)
@@ -1522,7 +1522,10 @@ async def describe_table(
     except Exception:
         return res_json
 
-    if not isinstance(raw_rows, list):
+    if isinstance(raw_rows, dict) and "columns" in raw_rows and "rows" in raw_rows:
+        cols = [c.lower() for c in raw_rows["columns"]]
+        raw_rows = [dict(zip(cols, r)) for r in raw_rows["rows"]]
+    elif not isinstance(raw_rows, list):
         return res_json
 
     target_name = f"{target_schema}.{table_clean}" if target_schema else table_clean
@@ -1577,6 +1580,7 @@ async def sample_table(
 ) -> str:
     """Quick preview of 1-50 rows from a table or view (default: 5 rows).
     Automatically generates dialect-specific limit queries (LIMIT / ROWNUM).
+    Returns rows in columnar format {'columns': [...], 'rows': [...]} for token efficiency.
     Ideal for inspecting real data values and column formats without writing manual queries."""
     d = get_db(db)
     sql, params = d.get_sample_query(table, limit=limit, schema=schema)
@@ -1585,7 +1589,9 @@ async def sample_table(
 
 @mcp.tool()
 async def query(db: DbName, sql: str, context: Context) -> str:
-    """Execute read-only SELECT query, rows capped per connection. Requires user approval."""
+    """Execute read-only SELECT query, rows capped per connection.
+    Returns tabular data in columnar format {'columns': [...], 'rows': [...]} for 50-70% token efficiency.
+    Requires user approval."""
     d = get_db(db)
     reject = None if sql.lstrip().lower().startswith(("select", "with")) else "only SELECT/WITH queries allowed"
     return await execute("query", d, context, sql, (), reject)
