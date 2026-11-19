@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Minimal Template Config**: Cleaned up `SAMPLE_CONFIG` generated in `config.toml` during `db-grep --init`, removing cluttered commented-out database examples in favor of direct pointers to `db-grep --config add`.
+- **Documentation Restructuring**: Reorganized `README.md` to highlight `db-grep --config add` / `-c` as the recommended primary method for managing database connections, while providing a clear and comprehensive reference for optional manual `config.toml` editing (paths, driver-scoped schemas, configuration options table, and secret interpolation).
 - **Single Source of Truth (SSOT) Versioning**: Standardized version management so `pyproject.toml` is the sole source of truth; `updater.get_current_version()` now dynamically resolves the version from `pyproject.toml` via `tomllib` during development and falls back to package distribution metadata when installed.
 
 ## [0.5.1] - 2026-11-19

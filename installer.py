@@ -58,38 +58,12 @@ auto_metadata = true          # list_tables, find_objects & describe_table witho
 max_rows = 1000
 timeout_ms = 10000
 
-# ── Postgres Example 1: Full DSN with raw secret (ideal for local dev)
-# [db.postgres.ecommerce-dev]
-# description = "Development E-Commerce Database"
-# dsn = "postgres://ro_user:secret@localhost:5432/ecommerce_dev"
-# auto_tables = ["mst_*", "ref_*", "app_configs"]
-
-# ── Postgres Example 2: DSN + credentials from environment (shorthand)
-# [db.postgres.inventory-core]
-# description = "Core Inventory Management"
-# dsn = "postgres://localhost:5432/inventory?sslmode=require"
-# user = "ro_user"
-# password = "env:INVENTORY_PW"
-
-# ── Postgres Example 3: Inline password in DSN from env/file (special chars are auto URL-encoded)
-# [db.postgres.analytics-app]
-# description = "Analytics Database"
-# dsn = "postgres://ro_user:${env:ANALYTICS_PW}@localhost:5432/analytics"
-
-# ── Oracle Example: Connect string + secret from file (or inline: ro_user/${env:PAYROLL_PW}@localhost:1521/PROD)
-# [db.oracle.payroll-prod]
-# description = "Corporate Payroll Database"
-# dsn = "localhost:1521/PROD"  # or remote: "db-host:1521/PROD"
-# user = "ro_user"
-# password = "file:~/.config/db-grep/secrets/payroll"
-# schema = "HR"
-# auto_metadata = false       # structure inspection also requires y/n
-
-# ── MySQL Example: URI DSN + credentials from environment
-# [db.mysql.orders-app]
-# description = "Orders MySQL Database"
-# dsn = "mysql://ro_user:${env:ORDERS_PW}@localhost:3306/orders_db"
-# auto_tables = ["mst_*", "ref_*"]
+# Manage databases via CLI (recommended):
+#   db-grep --config add
+#   db-grep --config list
+#
+# Or add manual entries below (see README.md for examples):
+#   [db.<driver>.<name>]
 """
 
 

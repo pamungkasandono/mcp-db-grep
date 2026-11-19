@@ -45,8 +45,40 @@ db-grep -i -a cursor        # configure Cursor
 db-grep -i -a all           # configure all harnesses
 ```
 
-### 2. Add Your Database
-Edit `~/.config/db-grep/config.toml`:
+### 2. Add Your Database (Recommended: CLI)
+
+The easiest and safest way to add and configure databases is via the configuration CLI:
+
+```bash
+db-grep --config add           # or: db-grep -c add
+```
+
+This interactive wizard guides you step-by-step:
+1. Select the database driver (`postgres`, `oracle`, `mysql`).
+2. Provide a unique connection name.
+3. Enter DSN / host connection details and credentials (supports raw, environment variables, or files).
+4. Configure optional settings (default schema, description, auto-allowed tables).
+
+You can inspect, enable, disable, or delete databases anytime via the interactive dashboard:
+```bash
+db-grep -c                     # open interactive configuration dashboard
+db-grep -c list                # list all active and disabled databases
+db-grep -c disable inventory-core "maintenance window"
+db-grep -c enable inventory-core
+db-grep -c delete old-service
+db-grep -c edit                # open config.toml in default editor (Notepad / nano)
+```
+
+---
+
+### Optional: Manual Configuration (`config.toml`)
+
+If you prefer editing the configuration directly or automating environments via script/dotfiles, edit `config.toml`:
+* **Linux / macOS**: `~/.config/db-grep/config.toml`
+* **Windows**: `%APPDATA%\db-grep\config.toml`
+
+#### Minimal Template:
+A fresh installation creates a clean configuration file without clutter:
 ```toml
 [monitor]
 port = 48260
@@ -55,61 +87,77 @@ history_limit = 20           # replay recent audit activity before monitor opene
 
 [defaults]
 auto_metadata = true          # list_tables, find_objects & describe_table without y/n
-max_rows = 100
-timeout_ms = 10000
+max_rows = 1000               # default maximum rows returned per query
+timeout_ms = 10000            # default query timeout in milliseconds
+```
 
-# ── Format 1: Full DSN, raw credentials (ideal for local dev)
+#### Database Section Syntax:
+Define databases under driver-scoped tables: `[db.<driver>.<name>]`, where `<driver>` is `postgres`, `oracle`, or `mysql`.
+
+```toml
+# ── PostgreSQL Examples ─────────────────────────────────────────────
+# Format 1: Full DSN with credentials (ideal for local development)
 [db.postgres.ecommerce-dev]
 description = "Development E-Commerce Database"
 dsn = "postgres://ro_user:secret@localhost:5432/ecommerce_dev"
 auto_tables = ["mst_*", "ref_*", "app_configs"]
 
-# ── Format 2: DSN + credentials from environment (shorthand)
+# Format 2: DSN + credentials from environment variable (recommended for production)
 [db.postgres.inventory-core]
 description = "Core Inventory Management"
 dsn = "postgres://localhost:5432/inventory?sslmode=require"
 user = "ro_user"
 password = "env:INVENTORY_PW"
 
-# ── Format 3: Inline password in DSN from env or file (always use |urlenc)
+# Format 3: Inline password interpolation (special characters are auto URL-encoded)
 [db.postgres.analytics-app]
 description = "Analytics Database"
-dsn = "postgres://ro_user:${env:ANALYTICS_PW|urlenc}@localhost:5432/analytics"
+dsn = "postgres://ro_user:${env:ANALYTICS_PW}@localhost:5432/analytics"
 
-# ── Oracle Format A: Connect string + user + secret from file
+# ── Oracle Examples ─────────────────────────────────────────────────
+# Format A: Connect string (host:port/service) + user + secret from file
 [db.oracle.payroll-prod]
 description = "Corporate Payroll Database"
 dsn = "localhost:1521/PROD"  # or remote: "db-host:1521/PROD"
 user = "ro_user"
 password = "file:~/.config/db-grep/secrets/payroll"
 schema = "HR"
-auto_metadata = false        # override: table inspection requires y/n
+auto_metadata = false        # override: table inspection also requires approval
 
-# ── Oracle Format B: Inline user and password inside connect string
+# Format B: Inline user and password in connect string
 [db.oracle.emergency-loan]
 description = "Emergency Loan Service"
 dsn = "ro_user/${env:EMLOAN_PW}@localhost:1521/EMLOAN"
+
+# ── MySQL Examples ──────────────────────────────────────────────────
+# URI DSN with environment variable interpolation
+[db.mysql.orders-app]
+description = "Orders MySQL Database"
+dsn = "mysql://ro_user:${env:ORDERS_PW}@localhost:3306/orders_db"
+auto_tables = ["mst_*", "ref_*"]
 ```
-*(Supports universal interpolation `${env:VAR}`, `${file:/path}`, `${env:VAR|urlenc}`, and shorthand `env:VAR` / `file:/path`).*
 
----
+#### Configuration Options Reference:
 
-## Configuration Manager (`db-grep --config` / `-c`)
+| Field | Type | Required | Description | Example |
+| :--- | :--- | :---: | :--- | :--- |
+| `dsn` | `str` | **Yes** | Connection string, URI, or `host:port/service` | `"postgres://localhost:5432/mydb"` |
+| `user` | `str` | Optional | Database username (if not embedded in `dsn`) | `"ro_user"` or `"env:DB_USER"` |
+| `password` | `str` | Optional | Password or secret interpolation reference | `"secret"`, `"env:VAR"`, `"file:/path"` |
+| `password_env` | `str` | Optional | Direct environment variable name holding password | `"MY_DB_PASSWORD"` |
+| `description` | `str` | Optional | Human-readable description shown in monitor & AI | `"Primary customer database"` |
+| `schema` | `str` | Optional | Default schema/owner | `"public"` (Postgres), `"HR"` (Oracle) |
+| `auto_tables` | `list` | Optional | Glob patterns for tables that bypass monitor prompt | `["mst_*", "ref_*"]` |
+| `auto_metadata` | `bool` | Optional | Auto-approve metadata exploration (`find_objects`, etc.) | `true` (default) or `false` |
+| `max_rows` | `int` | Optional | Max rows returned per query (overrides defaults) | `500` |
+| `timeout_ms` | `int` | Optional | Query execution timeout in milliseconds | `15000` |
 
-Manage databases without memorizing file paths or manual TOML editing:
-
-```bash
-# Interactive dashboard (view status, toggle enable/disable, add, delete, edit):
-db-grep -c                     # or: db-grep --config
-
-# Direct CLI commands:
-db-grep -c list                # or: db-grep --config list
-db-grep -c disable inventory-core "weekly migration"
-db-grep -c enable inventory-core
-db-grep -c delete old-service
-db-grep -c add
-db-grep -c edit
-```
+#### Safe Secret Interpolation:
+Never hardcode production passwords. `db-grep` resolves secrets on-demand without writing them to disk:
+* **Environment Variable Shorthand**: `password = "env:INVENTORY_PW"`
+* **Environment Variable Syntax**: `dsn = "postgres://ro_user:${env:DB_PW}@localhost/db"` *(special characters are automatically URL-encoded in URI DSNs)*
+* **File Reference Shorthand**: `password = "file:~/.config/db-grep/secrets/db_pass"`
+* **File Reference Syntax**: `password = "${file:/path/to/secret}"`
 
 ---
 
