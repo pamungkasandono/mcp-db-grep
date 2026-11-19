@@ -9,13 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Unified & Granular Access Control Configuration (Breaking Change)**:
+  - Replaced inconsistent key naming and boolean permissions with capability lists and symmetric policy conventions:
+    - `allow_metadata: list[str]` (e.g. `["read"]`): Extensible capability list governing metadata tools (`list_tables`, `find_objects`, `search_columns`, `describe_table`).
+    - `allow_data: list[str]` (e.g. `["read"]` or `[]`): Extensible capability list governing direct `query` executions.
+    - `allow_tables: list[str]`: Table patterns permitted for auto-approved data access (replaces `auto_tables`).
+    - `restricted_tables: list[str]`: Table patterns strictly requiring manual human approval on every access (replaces `always_ask_tables`).
+    - `restricted_columns: list[str]`: Column patterns strictly requiring manual human approval on every access (replaces `sensitive_columns`).
+  - Interactive `[a]lways allow` prompt in `db-grep monitor` appends approved tables to `allow_tables` in `config.toml`.
+  - Updated CLI configuration inspector and interactive `db-grep config add` wizard to reflect the new access control schema.
+
 ### Added
 - **Granular Database Access Control Engine**:
-  - **Decoupled Metadata vs Data Permissions**: Split generic metadata exploration (`read_metadata = true/false`, formerly `auto_metadata`) from row queries (`read_data = true/false`).
-  - **Column-Level Access Control (`sensitive_columns`)**: Protect specific sensitive columns (e.g. `salary*`, `user.nik`, `password_hash`). Any query referencing sensitive columns strictly triggers manual approval even if the table is in `auto_tables`. Guarded wildcard (`SELECT *`) queries against sensitive tables.
-  - **Strict Table Override (`always_ask_tables`)**: High-priority table list (e.g. `pegawai_salary`, `user_identity`) that mandates manual human confirmation every time, overriding `auto_tables` and `read_data`.
-  - **Interactive Terminal Persistence**: Replaced blunt session-wide auto-approve with per-table auto-allow. Pressing `[a]lways allow` in `db-grep monitor` automatically appends the queried table(s) to `auto_tables` in `config.toml` without manual file editing. If sensitive data is touched, auto-allow persistence is automatically disabled.
-  - **Contextual Terminal Monitor Display**: Enhanced the monitor prompt to explicitly display accessed tables, queried columns, and trigger reasons (e.g. `[SENSITIVE COLUMN]`, `[ALWAYS-ASK TABLE]`, or `[UNAPPROVED TABLE]`).
+  - **Decoupled Metadata vs Data Permissions**: Split schema exploration (`allow_metadata = ["read"]`) from row queries (`allow_data = []`).
+  - **Column-Level Access Control (`restricted_columns`)**: Protect specific sensitive columns (e.g. `salary*`, `user.nik`, `password_hash`). Any query referencing restricted columns strictly triggers manual approval even if the table is in `allow_tables`. Guarded wildcard (`SELECT *`) queries against tables containing restricted columns.
+  - **Strict Table Override (`restricted_tables`)**: High-priority table list (e.g. `pegawai_salary`, `user_identity`) that mandates manual human confirmation every time, overriding `allow_tables` and `allow_data`.
+  - **Interactive Terminal Persistence**: Replaced blunt session-wide auto-approve with per-table auto-allow. Pressing `[a]lways allow` in `db-grep monitor` automatically appends the queried table(s) to `allow_tables` in `config.toml` without manual file editing. If restricted data is touched, auto-allow persistence is automatically disabled.
+  - **Contextual Terminal Monitor Display**: Enhanced the monitor prompt to explicitly display accessed tables, queried columns, and trigger reasons (e.g. `[RESTRICTED COLUMN]`, `[RESTRICTED TABLE]`, or `[UNAPPROVED TABLE]`).
 
 ## [0.7.0] - 2026-11-19
 

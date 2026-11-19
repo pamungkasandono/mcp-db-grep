@@ -119,19 +119,19 @@ password = "env:APP_PW"
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    def test_defaults_inheritance_and_auto_tables_isolation(self):
+    def test_defaults_inheritance_and_allow_tables_isolation(self):
         sample_toml = b"""[defaults]
-auto_metadata = false
+allow_metadata = []
 max_rows = 50
 timeout_ms = 5000
 
 [db.postgres.app]
 dsn = "postgres://localhost/app"
-auto_tables = ["mst_*", "ref_*"]
+allow_tables = ["mst_*", "ref_*"]
 
 [db.postgres.sens]
 dsn = "postgres://localhost/sens"
-# auto_tables not set
+# allow_tables not set
 """
         with tempfile.NamedTemporaryFile("wb", suffix=".toml", delete=False) as tmp:
             tmp.write(sample_toml)
@@ -146,15 +146,15 @@ dsn = "postgres://localhost/sens"
                 sens = dbs["postgres:sens"]
 
                 # Inherited from [defaults]
-                self.assertFalse(app["auto_metadata"])
+                self.assertEqual(app["allow_metadata"], [])
                 self.assertEqual(app["max_rows"], 50)
                 self.assertEqual(app["timeout_ms"], 5000)
-                self.assertEqual(app["auto_tables"], ["mst_*", "ref_*"])
+                self.assertEqual(app["allow_tables"], ["mst_*", "ref_*"])
 
-                # sens inherits defaults, but auto_tables is NEVER inherited
-                self.assertFalse(sens["auto_metadata"])
+                # sens inherits defaults, but allow_tables is NEVER inherited
+                self.assertEqual(sens["allow_metadata"], [])
                 self.assertEqual(sens["max_rows"], 50)
-                self.assertEqual(sens["auto_tables"], [])
+                self.assertEqual(sens["allow_tables"], [])
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -192,13 +192,13 @@ typo_field = "oops"
         tables_cte = server.extract_tables(sql_cte)
         self.assertEqual(tables_cte, {"app_cache", "mst_data"})
 
-    def test_auto_tables_pattern_matching(self):
+    def test_allow_tables_pattern_matching(self):
         patterns = ["mst_*", "ref_*", "config"]
-        self.assertTrue(server.matches_auto_tables("mst_users", patterns))
-        self.assertTrue(server.matches_auto_tables("REF_LOOKUP", patterns))
-        self.assertTrue(server.matches_auto_tables("config", patterns))
-        self.assertFalse(server.matches_auto_tables("salary_records", patterns))
-        self.assertFalse(server.matches_auto_tables("users", patterns))
+        self.assertTrue(server.matches_allow_tables("mst_users", patterns))
+        self.assertTrue(server.matches_allow_tables("REF_LOOKUP", patterns))
+        self.assertTrue(server.matches_allow_tables("config", patterns))
+        self.assertFalse(server.matches_allow_tables("salary_records", patterns))
+        self.assertFalse(server.matches_allow_tables("users", patterns))
 
     def test_secret_redaction_in_db_errors(self):
         cfg = {

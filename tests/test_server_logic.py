@@ -610,27 +610,27 @@ dsn = "postgres://localhost/crm"
         self.assertIn("amount", cols_cte)
         self.assertIn("name", cols_cte)
 
-    def test_check_sensitive_columns_matching(self):
+    def test_check_restricted_columns_matching(self):
         sens_patterns = ["salary*", "user.nik", "password_hash"]
 
-        # 1. Safe query: no sensitive columns
-        matched_safe = server.check_sensitive_columns({"id", "username"}, {"user"}, False, sens_patterns)
+        # 1. Safe query: no restricted columns
+        matched_safe = server.check_restricted_columns({"id", "username"}, {"user"}, False, sens_patterns)
         self.assertEqual(matched_safe, [])
 
         # 2. Bare pattern match
-        matched_bare = server.check_sensitive_columns({"id", "salary_amount"}, {"payroll"}, False, sens_patterns)
+        matched_bare = server.check_restricted_columns({"id", "salary_amount"}, {"payroll"}, False, sens_patterns)
         self.assertEqual(matched_bare, ["salary_amount"])
 
         # 3. Table-qualified pattern match: user.nik matches when table is user
-        matched_qual = server.check_sensitive_columns({"nik"}, {"user"}, False, sens_patterns)
+        matched_qual = server.check_restricted_columns({"nik"}, {"user"}, False, sens_patterns)
         self.assertEqual(matched_qual, ["nik (user.nik)"])
 
         # 4. Table-qualified pattern does NOT match when table is different
-        matched_other_tbl = server.check_sensitive_columns({"nik"}, {"other_table"}, False, sens_patterns)
+        matched_other_tbl = server.check_restricted_columns({"nik"}, {"other_table"}, False, sens_patterns)
         self.assertEqual(matched_other_tbl, [])
 
-        # 5. Wildcard query on table with sensitive columns
-        matched_wildcard = server.check_sensitive_columns(set(), {"payroll"}, True, sens_patterns)
+        # 5. Wildcard query on table with restricted columns
+        matched_wildcard = server.check_restricted_columns(set(), {"payroll"}, True, sens_patterns)
         self.assertIn("* (salary*)", matched_wildcard)
 
     def test_granular_access_control_rules_and_priorities(self):
@@ -638,14 +638,14 @@ dsn = "postgres://localhost/crm"
 port = 48260
 
 [defaults]
-read_metadata = true
-read_data = false
+allow_metadata = ["read"]
+allow_data = []
 
 [db.postgres.corp]
 dsn = "postgres://localhost/corp"
-auto_tables = ["departments", "public_announcements"]
-always_ask_tables = ["pegawai_salary", "user_identity"]
-sensitive_columns = ["salary*", "nik", "password_hash"]
+allow_tables = ["departments", "public_announcements"]
+restricted_tables = ["pegawai_salary", "user_identity"]
+restricted_columns = ["salary*", "nik", "password_hash"]
 """
         with self.temp_config(sample_toml):
             db_corp = server.get_db("corp")
@@ -665,20 +665,20 @@ sensitive_columns = ["salary*", "nik", "password_hash"]
                 sent_messages.append(msg)
             server.link.send = fake_send
 
-            # 1. Metadata tool: list_tables should auto-allow via read_metadata = true
+            # 1. Metadata tool: list_tables should auto-allow via allow_metadata = ["read"]
             sent_messages.clear()
             asyncio.run(server.execute("list_tables", db_corp, "corp · list tables", "SELECT 1"))
             self.assertEqual(sent_messages[0]["type"], "auto_allow")
-            self.assertEqual(sent_messages[0]["reason"], "read_metadata = true")
+            self.assertEqual(sent_messages[0]["reason"], "allow_metadata permits 'read'")
 
-            # 2. Safe data query on auto_tables without sensitive columns -> auto-allowed
+            # 2. Safe data query on allow_tables without restricted columns -> auto-allowed
             sent_messages.clear()
             asyncio.run(server.execute("query", db_corp, "corp · query dept", "SELECT id, name FROM departments"))
             self.assertEqual(sent_messages[0]["type"], "auto_allow")
-            self.assertIn("match auto_tables", sent_messages[0]["reason"])
+            self.assertIn("match allow_tables", sent_messages[0]["reason"])
 
-            # 3. Always-ask table: even if in auto_tables, always_ask has strict priority
-            db_corp.cfg["auto_tables"].append("pegawai_salary")
+            # 3. Restricted table: even if in allow_tables, restricted_tables has strict priority
+            db_corp.cfg["allow_tables"].append("pegawai_salary")
             sent_messages.clear()
             server.link.reader = MagicMock()
             server.link.reader.readline = MagicMock()
@@ -690,14 +690,14 @@ sensitive_columns = ["salary*", "nik", "password_hash"]
             asyncio.run(server.execute("query", db_corp, "corp · query salary", "SELECT id, month FROM pegawai_salary"))
             req_msg = next(m for m in sent_messages if m["type"] == "request")
             self.assertFalse(req_msg["can_auto_allow"])
-            self.assertIn("always_ask_table", req_msg["trigger_reason"])
+            self.assertIn("restricted_table", req_msg["trigger_reason"])
 
-            # 4. Sensitive column: query accessing salary_amount forces prompt & disables auto_allow
+            # 4. Restricted column: query accessing salary_amount forces prompt & disables auto_allow
             sent_messages.clear()
             asyncio.run(server.execute("query", db_corp, "corp · query salary", "SELECT id, salary_amount FROM departments"))
             req_msg2 = next(m for m in sent_messages if m["type"] == "request")
             self.assertFalse(req_msg2["can_auto_allow"])
-            self.assertIn("sensitive column(s)", req_msg2["trigger_reason"])
+            self.assertIn("restricted column(s)", req_msg2["trigger_reason"])
 
             # 5. Normal unapproved table -> prompts with can_auto_allow = True and candidate_tables
             sent_messages.clear()

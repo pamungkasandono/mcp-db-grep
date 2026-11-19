@@ -12,7 +12,7 @@ class TestConfigManager(unittest.TestCase):
 port = 48260
 
 [defaults]
-auto_metadata = true
+allow_metadata = ["read"]
 
 [db.postgres.ecommerce-dev]
 description = "E-Commerce App"
@@ -104,13 +104,13 @@ port = 48260
                     dsn="postgres://localhost/billing",
                     description="Billing Service",
                     password="env:BILLING_PW",
-                    auto_tables=["mst_*", "ref_*"],
+                    allow_tables=["mst_*", "ref_*"],
                 )
                 self.assertTrue(added)
 
                 content = tmp_path.read_text(encoding="utf-8")
                 self.assertIn("[db.postgres.billing-service]", content)
-                self.assertIn('auto_tables = ["mst_*", "ref_*"]', content)
+                self.assertIn('allow_tables = ["mst_*", "ref_*"]', content)
 
                 # 2. Delete entry
                 deleted = config_manager.delete_entry("billing-service", confirm=False)
@@ -219,13 +219,13 @@ dsn = "postgres://localhost/ecom"
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    def test_add_auto_tables(self):
+    def test_add_allow_tables(self):
         sample = b"""[monitor]
 port = 48260
 
 [db.postgres.orders-db]
 dsn = "postgres://localhost/orders"
-auto_tables = ["orders"]
+allow_tables = ["orders"]
 
 [db.mysql.inventory-db]
 dsn = "mysql://localhost/inv"
@@ -236,18 +236,18 @@ dsn = "mysql://localhost/inv"
 
         try:
             with patch.object(config_manager, "CONFIG", tmp_path):
-                # 1. Append to entry with existing auto_tables
-                ok = config_manager.add_auto_tables("orders-db", ["order_items", "orders"])
+                # 1. Append to entry with existing allow_tables
+                ok = config_manager.add_allow_tables("orders-db", ["order_items", "orders"])
                 self.assertTrue(ok)
 
-                # 2. Add to entry without existing auto_tables
-                ok2 = config_manager.add_auto_tables("mysql:inventory-db", ["stock", "warehouses"])
+                # 2. Add to entry without existing allow_tables
+                ok2 = config_manager.add_allow_tables("mysql:inventory-db", ["stock", "warehouses"])
                 self.assertTrue(ok2)
 
                 content = tmp_path.read_text(encoding="utf-8")
                 # Deduplicated and merged
-                self.assertIn('auto_tables = ["orders", "order_items"]', content)
-                self.assertIn('auto_tables = ["stock", "warehouses"]', content)
+                self.assertIn('allow_tables = ["orders", "order_items"]', content)
+                self.assertIn('allow_tables = ["stock", "warehouses"]', content)
         finally:
             tmp_path.unlink(missing_ok=True)
 

@@ -43,7 +43,7 @@ def ensure_config_exists() -> Path:
         CONFIG.parent.mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
             CONFIG.parent.chmod(0o700)
-        CONFIG.write_text("[monitor]\nport = 48260\n\n[defaults]\nread_metadata = true\nread_data = false\n\n", encoding="utf-8")
+        CONFIG.write_text("[monitor]\nport = 48260\n\n[defaults]\nallow_metadata = [\"read\"]\nallow_data = []\n\n", encoding="utf-8")
         if os.name == "posix":
             CONFIG.chmod(0o600)
     return CONFIG
@@ -237,20 +237,20 @@ def delete_entry(target: str, confirm: bool = True) -> bool:
     return True
 
 
-def add_auto_tables(target: str, tables: list[str]) -> bool:
-    """Append tables to auto_tables list of a database entry in config.toml."""
+def add_allow_tables(target: str, tables: list[str]) -> bool:
+    """Append tables to allow_tables list of a database entry in config.toml."""
     raw_lines, entry = _load_target_entry(target)
     if not entry:
         return False
     if not tables:
         return True
 
-    auto_re = re.compile(r"^(\s*auto_tables\s*=\s*)\[(.*)\](.*)$")
+    allow_re = re.compile(r"^(\s*(?:allow_tables|auto_tables)\s*=\s*)\[(.*)\](.*)$")
     found_idx = -1
     existing_tables: list[str] = []
 
     for idx, line in enumerate(entry.lines):
-        m = auto_re.match(line)
+        m = allow_re.match(line)
         if m:
             found_idx = idx
             raw_list = "[" + m.group(2) + "]"
@@ -270,7 +270,7 @@ def add_auto_tables(target: str, tables: list[str]) -> bool:
 
     import json
     formatted_list = json.dumps(merged)
-    new_line = f"auto_tables = {formatted_list}\n"
+    new_line = f"allow_tables = {formatted_list}\n"
 
     new_lines = list(entry.lines)
     if found_idx >= 0:
@@ -283,6 +283,9 @@ def add_auto_tables(target: str, tables: list[str]) -> bool:
 
     save_config_lines(raw_lines[: entry.start_line] + new_lines + raw_lines[entry.end_line :])
     return True
+
+
+add_auto_tables = add_allow_tables
 
 
 DEFAULT_DSNS = {
@@ -299,9 +302,13 @@ def add_entry(
     description: str = "",
     user: str = "",
     password: str = "",
-    auto_metadata: str = "",
-    auto_tables: list[str] | None = None,
+    allow_metadata: list[str] | None = None,
+    allow_data: list[str] | None = None,
+    allow_tables: list[str] | None = None,
+    restricted_tables: list[str] | None = None,
+    restricted_columns: list[str] | None = None,
 ) -> bool:
+    import json
     driver = DRIVER_ALIASES.get(driver.lower().strip(), driver.lower().strip())
     if driver not in SUPPORTED_DRIVERS:
         print(f"Error: Unsupported driver '{driver}'. Supported drivers: {', '.join(SUPPORTED_DRIVERS)}")
@@ -327,11 +334,16 @@ def add_entry(
         block.append(f'user = "{user.strip()}"\n')
     if password.strip():
         block.append(f'password = "{password.strip()}"\n')
-    if auto_metadata.lower() in ("true", "false"):
-        block.append(f"auto_metadata = {auto_metadata.lower()}\n")
-    if auto_tables:
-        formatted = ", ".join(f'"{t}"' for t in auto_tables)
-        block.append(f"auto_tables = [{formatted}]\n")
+    if allow_metadata is not None:
+        block.append(f"allow_metadata = {json.dumps(allow_metadata)}\n")
+    if allow_data is not None:
+        block.append(f"allow_data = {json.dumps(allow_data)}\n")
+    if allow_tables:
+        block.append(f"allow_tables = {json.dumps(allow_tables)}\n")
+    if restricted_tables:
+        block.append(f"restricted_tables = {json.dumps(restricted_tables)}\n")
+    if restricted_columns:
+        block.append(f"restricted_columns = {json.dumps(restricted_columns)}\n")
 
     updated_full = raw_lines + block
     save_config_lines(updated_full)
@@ -367,10 +379,10 @@ def prompt_add_interactive() -> bool:
             user = input("User (required for Oracle if not in DSN): ").strip()
 
         pw = input("Password [plain, or 'env:NAME', or 'file:PATH', Enter to skip]: ").strip()
-        auto_tables_in = input("Auto-allow tables [optional, comma-separated e.g. mst_*,ref_*]: ").strip()
-        auto_tables = [t.strip() for t in auto_tables_in.split(",") if t.strip()] if auto_tables_in else None
+        allow_tables_in = input("Allow tables [optional, comma-separated e.g. mst_*,ref_*]: ").strip()
+        allow_tables = [t.strip() for t in allow_tables_in.split(",") if t.strip()] if allow_tables_in else None
 
-        return add_entry(driver, name, dsn, description=desc, user=user, password=pw, auto_tables=auto_tables)
+        return add_entry(driver, name, dsn, description=desc, user=user, password=pw, allow_tables=allow_tables)
     except (KeyboardInterrupt, EOFError):
         print("\nCancelled.")
         return False

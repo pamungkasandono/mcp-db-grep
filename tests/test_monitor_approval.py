@@ -67,7 +67,7 @@ class TestMonitorApproval(unittest.TestCase):
         self.assertEqual(writer.written[2], {"approved": False, "auto_session": False})
         self.assertEqual(len(keys), 0)
 
-    def test_always_allow_table_returns_add_auto_tables(self):
+    def test_always_allow_table_returns_add_allow_tables(self):
         messages = [
             {
                 "type": "request",
@@ -89,10 +89,10 @@ class TestMonitorApproval(unittest.TestCase):
 
         self.assertEqual(
             writer.written[1],
-            {"approved": True, "auto_session": False, "add_auto_tables": ["students"]},
+            {"approved": True, "auto_session": False, "add_allow_tables": ["students"], "add_auto_tables": ["students"]},
         )
 
-    def test_always_allow_rejected_when_sensitive_data_present(self):
+    def test_always_allow_rejected_when_restricted_data_present(self):
         messages = [
             {
                 "type": "request",
@@ -104,7 +104,7 @@ class TestMonitorApproval(unittest.TestCase):
                 "tables": ["pegawai"],
                 "columns": ["salary_amount"],
                 "can_auto_allow": False,
-                "trigger_reason": "sensitive column(s): salary_amount",
+                "trigger_reason": "restricted column(s): salary_amount",
             },
         ]
         reader = FakeStreamReader(messages)
@@ -196,7 +196,7 @@ class TestMonitorApproval(unittest.TestCase):
             records = [
                 {"ts": "2026-11-18T10:00:00Z", "event": "list_databases", "count": 2, "databases": ["postgres:academic_portal", "mysql:orders"]},
                 {"ts": "2026-11-18T10:00:05Z", "event": "check_connection", "targets": ["all"], "count": 2},
-                {"ts": "2026-11-18T10:01:00Z", "event": "auto_allow", "tool": "list_tables", "db": "postgres:academic_portal", "reason": "auto_metadata = true"},
+                {"ts": "2026-11-18T10:01:00Z", "event": "auto_allow", "tool": "list_tables", "db": "postgres:academic_portal", "reason": "allow_metadata permits 'read'"},
                 {"ts": "2026-11-18T10:02:00Z", "event": "denied", "reason": "monitor offline", "tool": "query", "db": "mysql:orders", "context": "orders · count", "sql": "SELECT count(*) FROM orders"},
                 {"ts": "2026-11-18T10:03:00Z", "event": "request", "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · find students", "sql": "SELECT * FROM students"},
                 {"ts": "2026-11-18T10:03:02Z", "event": "executed", "rows": 15, "ms": 4, "tool": "query", "db": "postgres:academic_portal", "context": "academic_portal · find students", "sql": "SELECT * FROM students"},

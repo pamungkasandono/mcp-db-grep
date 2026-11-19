@@ -70,10 +70,16 @@ def run_check_config_cli():
             print(f"         {d['description']}")
         if d.get("auth_source"):
             print(f"         Auth: {d['auth_source']}")
-        if "auto_metadata" in d:
-            print(f"         Auto-Metadata: {d['auto_metadata']}")
-        if d.get("auto_tables"):
-            print(f"         Auto-Tables: {', '.join(d['auto_tables'])}")
+        if "allow_metadata" in d:
+            print(f"         Allow-Metadata: {', '.join(d['allow_metadata']) if isinstance(d['allow_metadata'], list) else d['allow_metadata']}")
+        if "allow_data" in d:
+            print(f"         Allow-Data: {', '.join(d['allow_data']) if isinstance(d['allow_data'], list) else d['allow_data']}")
+        if d.get("allow_tables"):
+            print(f"         Allow-Tables: {', '.join(d['allow_tables'])}")
+        if d.get("restricted_tables"):
+            print(f"         Restricted-Tables: {', '.join(d['restricted_tables'])}")
+        if d.get("restricted_columns"):
+            print(f"         Restricted-Columns: {', '.join(d['restricted_columns'])}")
         for err in d.get("errors", []):
             print(f"         Error: {err}")
 

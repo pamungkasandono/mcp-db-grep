@@ -323,7 +323,7 @@ async def handle(reader, writer):
                             cand_label = f"'{candidate_tables[0]}'" if len(candidate_tables) == 1 else f"{len(candidate_tables)} table(s)"
                             prompt_str = f"Allow? [y]es once / [a]lways allow {cand_label} / [n]o: "
                         elif not can_auto_allow:
-                            prompt_str = "Allow? [y]es once / [n]o (auto-allow disabled: sensitive data): "
+                            prompt_str = "Allow? [y]es once / [n]o (auto-allow disabled: restricted data): "
                         else:
                             prompt_str = "Allow? [y]es once / [n]o: "
 
@@ -341,16 +341,17 @@ async def handle(reader, writer):
                     ok = True
                     add_tables = candidate_tables
                     cand_label = f"'{candidate_tables[0]}'" if len(candidate_tables) == 1 else f"{len(candidate_tables)} table(s)"
-                    print(f"{G}allowed and added {cand_label} to auto_tables in config.toml{N}")
+                    print(f"{G}allowed and added {cand_label} to allow_tables in config.toml{N}")
                 elif k_low == "a" and not can_auto_allow:
                     ok = False
-                    print(f"{R}denied (cannot auto-allow sensitive tables or columns){N}")
+                    print(f"{R}denied (cannot auto-allow restricted tables or columns){N}")
                 else:
                     ok = False
                     print(f"{R}{'timeout' if key is None else 'denied'}{N}")
 
                 resp_payload = {"approved": ok, "auto_session": False}
                 if add_tables and ok:
+                    resp_payload["add_allow_tables"] = add_tables
                     resp_payload["add_auto_tables"] = add_tables
                 await reply(writer, resp_payload)
                 if not ok:

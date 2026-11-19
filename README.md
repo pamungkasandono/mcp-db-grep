@@ -88,7 +88,8 @@ approval_timeout_s = 110      # auto-reject after 110s without response
 history_limit = 20           # replay recent audit activity before monitor opened (0 = off)
 
 [defaults]
-auto_metadata = true          # list_tables, find_objects & describe_table without y/n
+allow_metadata = ["read"]     # list_tables, find_objects, search_columns & describe_table without prompt
+allow_data = []               # data queries require approval unless covered by allow_tables
 max_rows = 1000               # default maximum rows returned per query
 timeout_ms = 10000            # default query timeout in milliseconds
 ```
@@ -102,7 +103,9 @@ Define databases under driver-scoped tables: `[db.<driver>.<name>]`, where `<dri
 [db.postgres.ecommerce-dev]
 description = "Development E-Commerce Database"
 dsn = "postgres://ro_user:secret@localhost:5432/ecommerce_dev"
-auto_tables = ["mst_*", "ref_*", "app_configs"]
+allow_tables = ["mst_*", "ref_*", "app_configs"]
+restricted_tables = ["payroll_*", "user_identity"]
+restricted_columns = ["salary*", "*.nik", "*.ssn"]
 
 # Format 2: DSN + credentials from environment variable (recommended for production)
 [db.postgres.inventory-core]
@@ -124,7 +127,7 @@ dsn = "localhost:1521/PROD"  # or remote: "db-host:1521/PROD"
 user = "ro_user"
 password = "file:~/.config/db-grep/secrets/payroll"
 schema = "HR"
-auto_metadata = false        # override: table inspection also requires approval
+allow_metadata = []          # override: table inspection also requires approval
 
 # Format B: Inline user and password in connect string
 [db.oracle.emergency-loan]
@@ -136,7 +139,7 @@ dsn = "ro_user/${env:EMLOAN_PW}@localhost:1521/EMLOAN"
 [db.mysql.orders-app]
 description = "Orders MySQL Database"
 dsn = "mysql://ro_user:${env:ORDERS_PW}@localhost:3306/orders_db"
-auto_tables = ["mst_*", "ref_*"]
+allow_tables = ["mst_*", "ref_*"]
 ```
 
 #### Configuration Options Reference:
@@ -149,8 +152,11 @@ auto_tables = ["mst_*", "ref_*"]
 | `password_env` | `str` | Optional | Direct environment variable name holding password | `"MY_DB_PASSWORD"` |
 | `description` | `str` | Optional | Human-readable description shown in monitor & AI | `"Primary customer database"` |
 | `schema` | `str` | Optional | Default schema/owner | `"public"` (Postgres), `"HR"` (Oracle) |
-| `auto_tables` | `list` | Optional | Glob patterns for tables that bypass monitor prompt | `["mst_*", "ref_*"]` |
-| `auto_metadata` | `bool` | Optional | Auto-approve metadata exploration (`find_objects`, etc.) | `true` (default) or `false` |
+| `allow_metadata` | `list` | Optional | Capabilities permitted on metadata exploration tools | `["read"]` |
+| `allow_data` | `list` | Optional | Capabilities permitted on raw data queries | `["read"]` or `[]` |
+| `allow_tables` | `list` | Optional | Glob patterns for tables that bypass monitor prompt | `["mst_*", "ref_*"]` |
+| `restricted_tables` | `list` | Optional | Glob patterns for tables that strictly require approval | `["payroll_*"]` |
+| `restricted_columns` | `list` | Optional | Glob patterns for columns that strictly require approval | `["salary*", "*.ssn"]` |
 | `max_rows` | `int` | Optional | Max rows returned per query (overrides defaults) | `500` |
 | `timeout_ms` | `int` | Optional | Query execution timeout in milliseconds | `15000` |
 
