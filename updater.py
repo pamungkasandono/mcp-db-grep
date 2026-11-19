@@ -408,7 +408,7 @@ def run_check_update_cli(prompt_upgrade: bool = True):
     if not info["success"]:
         print(f"Could not check for updates: {info.get('error')}")
         print("\nTip: You can upgrade directly without checking by running:")
-        print("  db-grep -U   (or: db-grep --upgrade)")
+        print("  db-grep update -y   (or: db-grep update --yes)")
         sys.exit(1)
 
     curr = info["current_version"]

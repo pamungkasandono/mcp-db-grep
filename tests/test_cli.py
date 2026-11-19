@@ -25,19 +25,26 @@ class TestCli(unittest.TestCase):
     def test_help_flag(self):
         res = self.run_cli(["--help"])
         self.assertEqual(res.returncode, 0)
-        self.assertIn("-s, --server", res.stdout)
-        self.assertIn("-m, --monitor", res.stdout)
-        self.assertIn("-i, --init", res.stdout)
-        self.assertIn("-c [CMD ...], --config [CMD ...]", res.stdout)
-        self.assertIn("-C, --check-config", res.stdout)
-        self.assertIn("-t [DB ...], --check-connection [DB ...]", res.stdout)
-        self.assertIn("-u, --check-update", res.stdout)
-        self.assertIn("-U, --upgrade", res.stdout)
-        self.assertIn("-a {claude", res.stdout)
-        self.assertIn("--client", res.stdout)
-        self.assertIn("claude", res.stdout)
-        self.assertIn("antigravity", res.stdout)
-        self.assertIn("pi", res.stdout)
+        self.assertIn("server (s)", res.stdout)
+        self.assertIn("monitor (m)", res.stdout)
+        self.assertIn("test (t)", res.stdout)
+        self.assertIn("config (c)", res.stdout)
+        self.assertIn("install (i)", res.stdout)
+        self.assertIn("update (u)", res.stdout)
+        self.assertIn("driver (d)", res.stdout)
+
+    def test_subcommand_helps(self):
+        res_inst = self.run_cli(["install", "--help"])
+        self.assertEqual(res_inst.returncode, 0)
+        self.assertIn("install [-h] [CLIENT]", res_inst.stdout)
+
+        res_up = self.run_cli(["update", "--help"])
+        self.assertEqual(res_up.returncode, 0)
+        self.assertIn("-y, --yes, -f, --force", res_up.stdout)
+
+        res_cfg = self.run_cli(["config", "--help"])
+        self.assertEqual(res_cfg.returncode, 0)
+        self.assertIn("config [-h] [ACTION ...]", res_cfg.stdout)
 
     def test_shorthand_flags_work(self):
         # -v
@@ -75,6 +82,20 @@ class TestCli(unittest.TestCase):
         # 10 is out of bounds for total_items=5
         self.assertEqual(parse_selection_tokens("1, 10", 5), [0])
         self.assertEqual(parse_selection_tokens("0, -1, foo", 5), [])
+
+    def test_normalize_cli_args(self):
+        from cli import normalize_cli_args
+        self.assertEqual(normalize_cli_args(["-s"]), ["server"])
+        self.assertEqual(normalize_cli_args(["-m"]), ["monitor"])
+        self.assertEqual(normalize_cli_args(["-t", "all"]), ["test", "all"])
+        self.assertEqual(normalize_cli_args(["-c", "list"]), ["config", "list"])
+        self.assertEqual(normalize_cli_args(["-C"]), ["config", "check"])
+        self.assertEqual(normalize_cli_args(["-i", "codex"]), ["install", "codex"])
+        self.assertEqual(normalize_cli_args(["-i", "-a", "claude"]), ["install", "claude"])
+        self.assertEqual(normalize_cli_args(["-u"]), ["update"])
+        self.assertEqual(normalize_cli_args(["-U"]), ["update", "-y"])
+        self.assertEqual(normalize_cli_args(["--upgrade"]), ["update", "-y"])
+        self.assertEqual(normalize_cli_args(["--setup-driver", "oracle"]), ["driver", "oracle"])
 
     def test_invalid_argument_fails(self):
         res = self.run_cli(["--invalid-argument-xyz"])

@@ -445,7 +445,7 @@ def ask_user_choices(detected_map: dict) -> list[str]:
     return list(dict.fromkeys(selected))
 
 
-def run_init(target_harness: str = None):
+def run_install(target_harness: str = None):
     config_dir = _home_config_path(".config/db-grep")
     config_dir.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
@@ -496,8 +496,8 @@ def run_init(target_harness: str = None):
             print(f"  ? Unknown harness: {t}")
 
     print("\nSetup complete! Next steps:")
-    print(f"1. Run 'db-grep --config add' (or 'db-grep --config') to add database connections (or edit {config_file})")
-    print("2. Run 'db-grep --monitor' in a terminal before starting your AI chat.")
+    print(f"1. Run 'db-grep config add' (or 'db-grep config') to add database connections (or edit {config_file})")
+    print("2. Run 'db-grep monitor' in a terminal before starting your AI chat.")
 
     # Check if Oracle is configured and driver is missing
     try:
@@ -520,3 +520,7 @@ def run_init(target_harness: str = None):
                         pass
     except (ImportError, OSError, tomllib.TOMLDecodeError):
         pass
+
+
+# Backward compatibility alias
+run_init = run_install

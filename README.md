@@ -18,11 +18,11 @@ If you reject (`n`), the AI stops immediately, tells you which query was rejecte
 
 ## Quick Start (3 Steps)
 
-### 1. Install & Initialize in One Step
+### 1. Install & Register in One Step
 ```bash
-pip install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep -i
+pip install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep install
 ```
-*(or via `pipx`: `pipx install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep -i`)*
+*(or via `pipx`: `pipx install git+https://github.com/pamungkasandono/mcp-db-grep.git && db-grep install`)*
 
 This will install the tool and immediately prompt you to select your AI coding assistant.
 
@@ -39,10 +39,11 @@ This will install the tool and immediately prompt you to select your AI coding a
 
 *Non-interactive shortcut:*
 ```bash
-db-grep -i -a claude        # configure Claude Code CLI (--init --client claude)
-db-grep -i -a antigravity   # configure Antigravity
-db-grep -i -a cursor        # configure Cursor
-db-grep -i -a all           # configure all harnesses
+db-grep install claude        # configure Claude Code CLI
+db-grep install antigravity   # configure Antigravity
+db-grep install cursor        # configure Cursor
+db-grep install codex         # configure Codex CLI
+db-grep install all           # configure all detected harnesses
 ```
 
 ### 2. Add Your Database (Recommended: CLI)
@@ -50,7 +51,7 @@ db-grep -i -a all           # configure all harnesses
 The easiest and safest way to add and configure databases is via the configuration CLI:
 
 ```bash
-db-grep --config add           # or: db-grep -c add
+db-grep config add             # or shorthand: db-grep -c add
 ```
 
 This interactive wizard guides you step-by-step:
@@ -61,12 +62,13 @@ This interactive wizard guides you step-by-step:
 
 You can inspect, enable, disable, or delete databases anytime via the interactive dashboard:
 ```bash
-db-grep -c                     # open interactive configuration dashboard
-db-grep -c list                # list all active and disabled databases
-db-grep -c disable inventory-core "maintenance window"
-db-grep -c enable inventory-core
-db-grep -c delete old-service
-db-grep -c edit                # open config.toml in default editor (Notepad / nano)
+db-grep config                 # open interactive configuration dashboard (or: db-grep -c)
+db-grep config list            # list all active and disabled databases
+db-grep config check           # validate configuration syntax & credentials
+db-grep config disable inventory-core "maintenance window"
+db-grep config enable inventory-core
+db-grep config delete old-service
+db-grep config edit            # open config.toml in default editor (Notepad / nano)
 ```
 
 ---
@@ -166,7 +168,7 @@ Never hardcode production passwords. `db-grep` resolves secrets on-demand withou
 ### Check Configuration (`config.toml`)
 Verify file permissions, syntax, required fields, and environment variables:
 ```bash
-db-grep -C                     # or: db-grep --check-config
+db-grep config check           # or shorthand: db-grep -C
 ```
 *(Also available as AI MCP tool `check_config`)*
 
@@ -174,14 +176,14 @@ db-grep -C                     # or: db-grep --check-config
 Test database handshake and latency using lightweight ping queries (`SELECT 1;` for Postgres/MySQL, `SELECT 1 FROM DUAL` for Oracle):
 ```bash
 # Interactive selection (supports 1, 1,3, 1-3, or 'all'):
-db-grep -t                     # or: db-grep --check-connection
+db-grep test                   # or shorthand: db-grep -t
 
 # Non-interactive CLI:
-db-grep -t all
-db-grep -t ecommerce-dev
-db-grep -t inventory-core                       # runs all drivers matching 'inventory-core'
-db-grep -t postgres:inventory-core oracle:payroll-prod
-db-grep -t pgsql:inventory-core ora:payroll-prod my:orders-app
+db-grep test all
+db-grep test ecommerce-dev
+db-grep test inventory-core                       # runs all drivers matching 'inventory-core'
+db-grep test postgres:inventory-core oracle:payroll-prod
+db-grep test pgsql:inventory-core ora:payroll-prod my:orders-app
 ```
 *(Passing a short name without prefix checks all matching databases across drivers; use `postgres:<name>` / `pgsql:<name>`, `oracle:<name>` / `ora:<name>`, or `mysql:<name>` / `my:<name>` to target a specific driver. Also available as AI MCP tool `check_connection(db="all")`, without interactive monitor approval).*
 
@@ -191,7 +193,7 @@ db-grep -t pgsql:inventory-core ora:payroll-prod my:orders-app
 
 1. **Terminal 1: Start Monitor**
    ```bash
-   db-grep -m                  # or: db-grep --monitor
+   db-grep monitor             # or shorthand: db-grep -m
    ```
    Keep this terminal open while working.
 
@@ -220,7 +222,7 @@ db-grep -t pgsql:inventory-core ora:payroll-prod my:orders-app
      - **5+ active sessions**: Displays a numbered session list supporting multi-select (`1`, `1,3`, `1-5`, or `all`).
 
 *Forgot to start the monitor?*
-Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep -m`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
+Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep monitor`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
 
 ---
 
@@ -228,11 +230,11 @@ Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open
 
 Check for latest releases and changelog directly from your terminal:
 ```bash
-db-grep -u                     # or: db-grep --check-update
+db-grep update                 # or shorthand: db-grep -u
 ```
-Or upgrade immediately:
+Or upgrade immediately without checking:
 ```bash
-db-grep -U                     # or: db-grep --upgrade
+db-grep update -y              # or: db-grep update -f / db-grep update --yes
 ```
 
 ---

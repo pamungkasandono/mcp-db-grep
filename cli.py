@@ -169,13 +169,76 @@ def run_check_connection_cli(targets: list[str] | str):
     sys.exit(1 if has_failure else 0)
 
 
-def main():
-    import driver_manager
-    driver_manager.ensure_driver_env()
+def normalize_cli_args(args: list[str]) -> list[str]:
+    """
+    Normalizes legacy flags and shorthands to subcommands.
+    Allows zero-overhead dispatching while keeping full backward compatibility.
+    """
+    if not args:
+        return []
 
+    # Extract -a / --client if present
+    client_val = None
+    cleaned = []
+    i = 0
+    while i < len(args):
+        if args[i] in ("-a", "--client") and i + 1 < len(args):
+            client_val = args[i + 1]
+            i += 2
+        elif args[i].startswith("--client="):
+            client_val = args[i].split("=", 1)[1]
+            i += 1
+        else:
+            cleaned.append(args[i])
+            i += 1
+
+    if not cleaned:
+        return ["install", client_val] if client_val else []
+
+    first = cleaned[0]
+    rest = cleaned[1:]
+
+    FLAG_MAP = {
+        "-s": ["server"],
+        "--server": ["server"],
+        "-m": ["monitor"],
+        "--monitor": ["monitor"],
+        "-t": ["test"],
+        "--test": ["test"],
+        "--check-connection": ["test"],
+        "-c": ["config"],
+        "--config": ["config"],
+        "-C": ["config", "check"],
+        "--check-config": ["config", "check"],
+        "-i": ["install"],
+        "--init": ["install"],
+        "--install": ["install"],
+        "init": ["install"],
+        "-u": ["update"],
+        "--update": ["update"],
+        "--check-update": ["update"],
+        "-U": ["update", "-y"],
+        "--upgrade": ["update", "-y"],
+        "--setup-driver": ["driver"],
+        "--driver": ["driver"],
+    }
+
+    if first in FLAG_MAP:
+        res = list(FLAG_MAP[first]) + rest
+    else:
+        res = cleaned
+
+    if client_val and res and res[0] in ("install", "i"):
+        if len(res) == 1:
+            res.append(client_val)
+
+    return res
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="db-grep",
-        description=f"db-grep v{__version__} - Database MCP CLI: Run MCP Server or Terminal Monitor",
+        description=f"db-grep v{__version__} - Database MCP CLI: Run MCP Server, Terminal Monitor, and Manage Connections",
     )
     parser.add_argument(
         "-v",
@@ -184,68 +247,58 @@ def main():
         version=f"%(prog)s {__version__}",
         help="Show program's version number and exit",
     )
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument(
-        "-s",
-        "--server",
-        action="store_true",
-        help="Run MCP stdio server for AI clients (Claude, Cursor, Antigravity, OpenCode, etc.)",
-    )
-    group.add_argument(
-        "-m",
-        "--monitor",
-        action="store_true",
-        help="Run interactive terminal monitor to inspect, approve [y], auto-approve [a], or reject [n] queries",
-    )
-    group.add_argument(
-        "-i",
-        "--init",
-        action="store_true",
-        help="Initialize default config.toml, instructions, and register MCP with detected AI clients",
-    )
-    group.add_argument(
-        "-c",
-        "--config",
-        nargs="*",
-        metavar="CMD",
-        help="Manage databases in config.toml (no args = interactive dashboard; subcommands: list, add, disable, enable, delete, edit)",
-    )
-    group.add_argument(
-        "-C",
-        "--check-config",
-        action="store_true",
-        help="Validate configuration syntax, driver settings, file permissions, and credential references",
-    )
-    group.add_argument(
-        "-t",
-        "--check-connection",
-        nargs="*",
-        metavar="DB",
-        help="Test physical database connectivity & latency (no args = interactive menu; pass 'all' or database names/aliases)",
-    )
-    group.add_argument(
-        "-u",
-        "--check-update",
-        action="store_true",
-        help="Check for latest releases, changelog, and new features on GitHub",
-    )
-    group.add_argument(
-        "-U",
-        "--upgrade",
-        action="store_true",
-        help="Upgrade db-grep package directly to the latest release from GitHub",
-    )
-    group.add_argument(
-        "--setup-driver",
-        nargs="?",
-        const="status",
-        metavar="DRIVER",
-        help="Inspect or configure database drivers (e.g. 'oracle', or omit DRIVER to show status)",
+
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    # server (aliases: s)
+    subparsers.add_parser(
+        "server",
+        aliases=["s"],
+        help="Run MCP stdio server for AI clients (Claude, Cursor, Codex, OpenCode, Antigravity, etc.)",
     )
 
-    parser.add_argument(
-        "-a",
-        "--client",
+    # monitor (aliases: m)
+    subparsers.add_parser(
+        "monitor",
+        aliases=["m"],
+        help="Run interactive terminal approval monitor to review and approve/reject queries",
+    )
+
+    # test (aliases: t)
+    p_test = subparsers.add_parser(
+        "test",
+        aliases=["t"],
+        help="Test physical database connectivity & latency (pass database names or omit for interactive menu)",
+    )
+    p_test.add_argument(
+        "targets",
+        nargs="*",
+        metavar="DB",
+        help="Target database name(s), aliases, or 'all'",
+    )
+
+    # config (aliases: c)
+    p_cfg = subparsers.add_parser(
+        "config",
+        aliases=["c"],
+        help="Manage databases in config.toml (subcommands: list, add, check, edit, disable, enable, delete)",
+    )
+    p_cfg.add_argument(
+        "action",
+        nargs="*",
+        metavar="ACTION",
+        help="Config subcommand (omit for interactive dashboard)",
+    )
+
+    # install (aliases: i)
+    p_inst = subparsers.add_parser(
+        "install",
+        aliases=["i"],
+        help="Install db-grep MCP configuration into AI clients (e.g. codex, claude, all)",
+    )
+    p_inst.add_argument(
+        "client",
+        nargs="?",
         choices=[
             "claude",
             "claude-desktop",
@@ -259,28 +312,78 @@ def main():
             "all",
             "none",
         ],
-        help="Target AI client to configure when running --init / -i (skip interactive prompt; e.g. -i -a claude)",
+        default=None,
+        metavar="CLIENT",
+        help="Target AI client to configure (omit for interactive selection)",
     )
 
-    args = parser.parse_args()
+    # update (aliases: u)
+    p_up = subparsers.add_parser(
+        "update",
+        aliases=["u"],
+        help="Check for updates and changelog, or directly upgrade package (-y / -f)",
+    )
+    p_up.add_argument(
+        "-y",
+        "--yes",
+        "-f",
+        "--force",
+        action="store_true",
+        dest="yes",
+        help="Directly upgrade without checking or confirmation",
+    )
 
-    if args.server:
+    # driver (aliases: d)
+    p_drv = subparsers.add_parser(
+        "driver",
+        aliases=["d"],
+        help="Inspect or configure database drivers (e.g. 'oracle', or omit to show status)",
+    )
+    p_drv.add_argument(
+        "driver",
+        nargs="?",
+        default="status",
+        metavar="DRIVER",
+        help="Driver name (e.g. 'oracle') or omit to show status",
+    )
+
+    return parser
+
+
+def main():
+    raw_args = sys.argv[1:]
+    norm_args = normalize_cli_args(raw_args)
+
+    parser = build_parser()
+    args = parser.parse_args(norm_args)
+
+    cmd = args.command
+
+    if cmd in ("server", "s"):
+        import driver_manager
+        driver_manager.ensure_driver_env()
         import server
         server.start()
-    elif args.monitor:
+
+    elif cmd in ("monitor", "m"):
         import monitor
         monitor.start()
-    elif args.init:
-        import installer
-        installer.run_init(target_harness=args.client)
-    elif args.config is not None:
+
+    elif cmd in ("test", "t"):
+        import driver_manager
+        driver_manager.ensure_driver_env()
+        run_check_connection_cli(args.targets)
+
+    elif cmd in ("config", "c"):
         import config_manager
-        cfg_args = args.config
+        cfg_args = args.action
         if not cfg_args:
             config_manager.run_interactive_dashboard()
         else:
             sub = cfg_args[0].lower()
-            if sub in ("list", "ls"):
+            if sub in ("check", "verify", "validate"):
+                run_check_config_cli()
+            elif sub in ("list", "ls"):
                 raw, entries = config_manager.read_config_entries()
                 if not entries:
                     print("No databases configured.")
@@ -289,19 +392,19 @@ def main():
                     print(f"[{idx}] {e.key:<28} [{status}]")
             elif sub == "disable":
                 if len(cfg_args) < 2:
-                    print("Usage: db-grep --config disable <DB> [reason]")
+                    print("Usage: db-grep config disable <DB> [reason]")
                 else:
                     target = cfg_args[1]
                     reason = " ".join(cfg_args[2:]) if len(cfg_args) > 2 else ""
                     config_manager.disable_entry(target, reason)
             elif sub == "enable":
                 if len(cfg_args) < 2:
-                    print("Usage: db-grep --config enable <DB>")
+                    print("Usage: db-grep config enable <DB>")
                 else:
                     config_manager.enable_entry(cfg_args[1])
             elif sub in ("del", "delete", "rm"):
                 if len(cfg_args) < 2:
-                    print("Usage: db-grep --config delete <DB>")
+                    print("Usage: db-grep config delete <DB>")
                 else:
                     config_manager.delete_entry(cfg_args[1], confirm=False)
             elif sub == "add":
@@ -310,22 +413,26 @@ def main():
                 config_manager.view_raw_config()
             else:
                 print(f"Unknown config command: {sub}")
-                print("Available commands: list, add, disable, enable, delete, edit")
-    elif args.check_config:
-        run_check_config_cli()
-    elif args.check_connection is not None:
-        run_check_connection_cli(args.check_connection)
-    elif args.check_update:
+                print("Available commands: list, add, check, disable, enable, delete, edit")
+                sys.exit(1)
+
+    elif cmd in ("install", "i"):
+        import installer
+        installer.run_install(target_harness=args.client)
+
+    elif cmd in ("update", "u"):
         import updater
-        updater.run_check_update_cli(prompt_upgrade=True)
-    elif args.upgrade:
-        import updater
-        updater.execute_upgrade()
-    elif args.setup_driver is not None:
+        if args.yes:
+            updater.execute_upgrade()
+        else:
+            updater.run_check_update_cli(prompt_upgrade=True)
+
+    elif cmd in ("driver", "d"):
         import driver_manager
-        ok = driver_manager.setup_driver(args.setup_driver)
+        ok = driver_manager.setup_driver(args.driver)
         if not ok:
             sys.exit(1)
+
     else:
         print(f"db-grep v{__version__}\n")
         parser.print_help()
