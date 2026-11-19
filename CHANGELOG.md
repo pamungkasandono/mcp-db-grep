@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-19
+
 ### Changed
 - **Modern Subcommand Architecture & Ergonomic CLI**:
   - Restructured CLI to a clean command hierarchy (`server`, `monitor`, `test`, `config`, `install`, `update`, `driver`) with shorthand flags (`-s`, `-m`, `-t`, `-c`, `-i`, `-u`, `-d`).

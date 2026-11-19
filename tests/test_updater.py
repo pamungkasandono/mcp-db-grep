@@ -7,7 +7,7 @@ import updater
 class TestUpdater(unittest.TestCase):
     def test_get_current_version_reads_pyproject_ssot(self):
         ver = updater.get_current_version()
-        self.assertEqual(ver, "0.5.1")
+        self.assertEqual(ver, "0.6.0")
 
     def test_get_current_version_fallback_package_or_zero(self):
         with patch.object(updater, "Path") as mock_path:
