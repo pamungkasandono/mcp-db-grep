@@ -148,6 +148,85 @@ def get_pi_config_path() -> Path:
 MCP_SERVER_NAME = "db-grep"
 STD_MCP_ENTRY = {"command": "db-grep", "args": ["server"]}
 
+STATUS_CONFIGURED = "configured"
+STATUS_NEEDS_UPDATE = "needs_update"
+STATUS_READY = "ready"
+STATUS_NOT_INSTALLED = "not_installed"
+
+# Terminal color codes (matching updater.py styling)
+BOLD = "\033[1m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m"
+DIM = "\033[90m"
+RESET = "\033[0m"
+
+STATUS_META = {
+    STATUS_CONFIGURED: {"label": "✓ configured", "color": GREEN},
+    STATUS_NEEDS_UPDATE: {"label": "▲ update needed", "color": YELLOW},
+    STATUS_READY: {"label": "○ ready to install", "color": CYAN},
+    STATUS_NOT_INSTALLED: {"label": "· not installed", "color": DIM},
+}
+
+
+def _supports_color() -> bool:
+    if "NO_COLOR" in os.environ:
+        return False
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def format_status_badge(status: str, width: int = 19, use_color: bool | None = None) -> str:
+    color_enabled = _supports_color() if use_color is None else use_color
+    meta = STATUS_META.get(status, {"label": status, "color": ""})
+    raw_label = meta["label"]
+    color = meta["color"] if color_enabled else ""
+    padded = f"{raw_label:<{width}}"
+    if color:
+        return f"{color}{padded}{RESET}"
+    return padded
+
+
+def shorten_path(path_str: str, max_len: int = 50) -> str:
+    """Shorten path by replacing home dir with ~ and middle dirs with ... if too long."""
+    if not path_str:
+        return ""
+    try:
+        home_str = str(Path.home())
+    except Exception:
+        home_str = ""
+
+    p = path_str
+    if home_str and p.startswith(home_str):
+        p = "~" + p[len(home_str):]
+    elif os.name == "nt":
+        userprofile = os.environ.get("USERPROFILE")
+        if userprofile and p.startswith(userprofile):
+            p = "~" + p[len(userprofile):]
+
+    if len(p) <= max_len:
+        return p
+
+    if p.startswith("`") or ("/" not in p and "\\" not in p):
+        return p
+
+    sep = "\\" if "\\" in p else "/"
+    parts = p.replace("\\", "/").split("/")
+    if len(parts) > 2:
+        # 1. Try: prefix/.../parent/file (e.g. ~/AppData/.../settings/cline_mcp_settings.json)
+        if len(parts) > 3:
+            cand = f"{sep.join(parts[:2])}{sep}...{sep}{sep.join(parts[-2:])}"
+            if len(cand) <= max_len:
+                return cand
+            cand = f"{parts[0]}{sep}...{sep}{sep.join(parts[-2:])}"
+            if len(cand) <= max_len:
+                return cand
+        # 2. Try: prefix/.../file (e.g. ~/.../claude_desktop_config.json)
+        cand = f"{parts[0]}{sep}...{sep}{parts[-1]}"
+        if len(cand) <= max_len:
+            return cand
+
+    return p[: max_len - 3] + "..."
+
 
 def _detect_path_or_bin(cfg: Path, binary: str | None = None, check_parent: bool = True) -> bool:
     return cfg.exists() or (check_parent and cfg.parent.exists()) or bool(binary and shutil.which(binary))
@@ -159,14 +238,44 @@ def _is_legacy_db_grep_entry(val: object) -> bool:
     cmd = val.get("command")
     if cmd == "db-grep" or cmd in (["db-grep", "--server"], ["db-grep", "server"]):
         return True
+    if isinstance(cmd, list) and len(cmd) > 0 and cmd[0] == "db-grep":
+        return True
     if isinstance(cmd, dict) and cmd.get("path") == "db-grep":
         return True
+    args = val.get("args")
+    if isinstance(args, list) and "--server" in args and cmd == "db-grep":
+        return True
     return False
+
+
+def _inspect_json_mcp_status(cfg_path: Path, section_key: str = "mcpServers") -> str:
+    if not cfg_path.exists():
+        return STATUS_READY
+    data = read_json_file(cfg_path)
+    servers = data.get(section_key, {})
+    if not isinstance(servers, dict):
+        return STATUS_READY
+
+    # Check for legacy 'db' entry belonging to db-grep
+    if _is_legacy_db_grep_entry(servers.get("db")):
+        return STATUS_NEEDS_UPDATE
+
+    # Check for 'db-grep' entry
+    if MCP_SERVER_NAME in servers:
+        entry = servers[MCP_SERVER_NAME]
+        entry_str = json.dumps(entry) if isinstance(entry, (dict, list)) else str(entry)
+        if "--server" in entry_str:
+            return STATUS_NEEDS_UPDATE
+        return STATUS_CONFIGURED
+
+    return STATUS_READY
 
 
 def _install_json_mcp(cfg_file: Path, label: str, section_key: str = "mcpServers", entry: dict | None = None):
     data = read_json_file(cfg_file)
     servers = data.get(section_key, {})
+    if not isinstance(servers, dict):
+        servers = {}
     if _is_legacy_db_grep_entry(servers.get("db")):
         servers.pop("db", None)
     servers[MCP_SERVER_NAME] = dict(entry or STD_MCP_ENTRY)
@@ -187,6 +296,22 @@ def install_claude_cli(_instructions_file: Path):
         print("  ✗ claude command not found in PATH")
         return
     try:
+        # Clean up legacy 'db' entry in ~/.claude.json projects if present
+        cfg_path = _home_config_path(".claude.json")
+        if cfg_path.exists():
+            data = read_json_file(cfg_path)
+            modified = False
+            for proj in data.get("projects", {}).values():
+                if isinstance(proj, dict) and "mcpServers" in proj:
+                    if _is_legacy_db_grep_entry(proj["mcpServers"].get("db")):
+                        proj["mcpServers"].pop("db", None)
+                        modified = True
+            if _is_legacy_db_grep_entry(data.get("mcpServers", {}).get("db")):
+                data["mcpServers"].pop("db", None)
+                modified = True
+            if modified:
+                write_json_file(cfg_path, data)
+
         subprocess.run(["claude", "mcp", "remove", "db"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["claude", "mcp", "remove", MCP_SERVER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         res = subprocess.run(
@@ -397,21 +522,107 @@ HARNESS_REGISTRY = [
 ]
 
 
-def ask_user_choices(detected_map: dict) -> list[str]:
-    print("\nSupported AI clients / harnesses:")
+def get_harness_status(item: dict) -> str:
+    """Determine installation status for a harness: configured, needs_update, ready, or not_installed."""
+    if not item["detect"]():
+        return STATUS_NOT_INSTALLED
+
+    hid = item["id"]
+
+    if hid == "claude":
+        cfg = _home_config_path(".claude.json")
+        if not cfg.exists():
+            return STATUS_READY
+        data = read_json_file(cfg)
+        servers = dict(data.get("mcpServers", {}))
+        for proj in data.get("projects", {}).values():
+            if isinstance(proj, dict) and "mcpServers" in proj:
+                servers.update(proj["mcpServers"])
+        if _is_legacy_db_grep_entry(servers.get("db")):
+            return STATUS_NEEDS_UPDATE
+        if MCP_SERVER_NAME in servers:
+            entry = servers[MCP_SERVER_NAME]
+            if "--server" in json.dumps(entry):
+                return STATUS_NEEDS_UPDATE
+            return STATUS_CONFIGURED
+        return STATUS_READY
+
+    if hid == "opencode":
+        return _inspect_json_mcp_status(get_opencode_config_path(), section_key="mcp")
+
+    if hid == "zed":
+        return _inspect_json_mcp_status(get_zed_config_path(), section_key="context_servers")
+
+    if hid == "codex":
+        cfg = get_codex_config_path()
+        if not cfg.exists():
+            return STATUS_READY
+        try:
+            content = cfg.read_text(encoding="utf-8")
+        except Exception:
+            return STATUS_READY
+        if "[mcp_servers.db]" in content and "db-grep" in content:
+            return STATUS_NEEDS_UPDATE
+        if "[mcp_servers.db-grep]" in content:
+            if 'args = ["--server"]' in content or "--server" in content:
+                return STATUS_NEEDS_UPDATE
+            return STATUS_CONFIGURED
+        return STATUS_READY
+
+    path_map = {
+        "claude-desktop": get_claude_desktop_config_path,
+        "antigravity": get_antigravity_config_path,
+        "cursor": get_cursor_config_path,
+        "roo-code": get_roo_code_config_path,
+        "pi": get_pi_config_path,
+    }
+    if hid in path_map:
+        return _inspect_json_mcp_status(path_map[hid](), section_key="mcpServers")
+
+    return STATUS_READY
+
+
+def ask_user_choices(detected_map: dict | None = None, status_map: dict | None = None) -> list[str]:
+    use_color = _supports_color()
+
+    # Determine status map if not provided
+    if status_map is None:
+        status_map = {}
+        for item in HARNESS_REGISTRY:
+            hid = item["id"]
+            if detected_map is not None:
+                is_detected = detected_map.get(hid, False)
+                status_map[hid] = STATUS_READY if is_detected else STATUS_NOT_INSTALLED
+            else:
+                status_map[hid] = get_harness_status(item)
+
+    print("\nSupported AI clients / harnesses:\n")
+
+    term_w = shutil.get_terminal_size((80, 24)).columns
+    max_path_len = max(35, term_w - 44)
 
     detected_ids = []
+    menu_lines = []
     for idx, item in enumerate(HARNESS_REGISTRY, start=1):
         hid = item["id"]
-        is_detected = detected_map.get(hid, False)
-        status = "(detected)" if is_detected else "(not installed)"
-        if is_detected:
+        status = status_map.get(hid, STATUS_NOT_INSTALLED)
+        if status != STATUS_NOT_INSTALLED:
             detected_ids.append(hid)
-        desc_val = item["desc"]() if callable(item["desc"]) else item["desc"]
-        print(f"  [{idx}] {hid:<16} - {item['name']} ({desc_val}) {status}")
 
+        badge = format_status_badge(status, width=19, use_color=use_color)
+        desc_val = item["desc"]() if callable(item["desc"]) else item["desc"]
+        short_desc = shorten_path(desc_val, max_path_len)
+        detail = f"{item['name']} ({short_desc})"
+        menu_lines.append(f"  [{idx}] {hid:<16} - {badge} {detail}")
+
+    for line in menu_lines:
+        print(line)
+
+    sep_len = max(50, min(term_w - 4, 76))
+    print("  " + "─" * sep_len)
     print(f"  [a] {'all':<16} - Force configure all harnesses")
     print(f"  [n] {'none':<16} - Skip for now (no harnesses configured)")
+    print("  " + "─" * sep_len)
 
     if detected_ids:
         default_label = f"detected only ({', '.join(detected_ids)})"
@@ -473,8 +684,9 @@ def run_install(target_harness: str = None):
         instructions_file.write_text(DEFAULT_INSTRUCTIONS, encoding="utf-8")
     print(f"✓ Installed instructions: {instructions_file}")
 
-    # 3. Detect installed harnesses
-    detected_map = {item["id"]: item["detect"]() for item in HARNESS_REGISTRY}
+    # 3. Detect installed harnesses & compute status
+    status_map = {item["id"]: get_harness_status(item) for item in HARNESS_REGISTRY}
+    detected_ids = [hid for hid, st in status_map.items() if st != STATUS_NOT_INSTALLED]
 
     if target_harness:
         target = target_harness.lower()
@@ -486,9 +698,9 @@ def run_install(target_harness: str = None):
             targets = [t.strip() for t in target.split(",") if t.strip()]
     else:
         if not sys.stdin.isatty():
-            targets = [hid for hid, detected in detected_map.items() if detected]
+            targets = detected_ids
         else:
-            targets = ask_user_choices(detected_map)
+            targets = ask_user_choices(status_map=status_map)
 
     print("\nApplying configuration to selected harnesses:")
     handler_map = {item["id"]: item["install"] for item in HARNESS_REGISTRY}

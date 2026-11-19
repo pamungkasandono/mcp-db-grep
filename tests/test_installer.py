@@ -233,6 +233,78 @@ class TestInstaller(unittest.TestCase):
                 self.assertNotIn("~", p, f"Unexpanded ~ on Linux for {hid}: {p}")
                 self.assertNotIn("\\", p, f"Backslash found on Linux for {hid}: {p}")
 
+    def test_shorten_path(self):
+        home = str(Path.home())
+        # Command should not be changed
+        self.assertEqual(installer.shorten_path("`claude mcp add`"), "`claude mcp add`")
+
+        # Path starting with home
+        p1 = f"{home}/.config/opencode/opencode.jsonc"
+        self.assertEqual(installer.shorten_path(p1, 50), "~/.config/opencode/opencode.jsonc")
+
+        # Long path should preserve filename and fit width
+        long_p = f"{home}/very/long/nested/directory/structure/and/subdirectories/config.json"
+        shortened = installer.shorten_path(long_p, 30)
+        self.assertTrue(shortened.endswith("config.json"))
+        self.assertLessEqual(len(shortened), 30)
+
+    def test_format_status_badge(self):
+        # Plain text
+        badge = installer.format_status_badge(installer.STATUS_CONFIGURED, width=19, use_color=False)
+        self.assertEqual(len(badge), 19)
+        self.assertIn("✓ configured", badge)
+
+        badge_upd = installer.format_status_badge(installer.STATUS_NEEDS_UPDATE, width=19, use_color=False)
+        self.assertEqual(len(badge_upd), 19)
+        self.assertIn("▲ update needed", badge_upd)
+
+        badge_rdy = installer.format_status_badge(installer.STATUS_READY, width=19, use_color=False)
+        self.assertEqual(len(badge_rdy), 19)
+        self.assertIn("○ ready to install", badge_rdy)
+
+        badge_not = installer.format_status_badge(installer.STATUS_NOT_INSTALLED, width=19, use_color=False)
+        self.assertEqual(len(badge_not), 19)
+        self.assertIn("· not installed", badge_not)
+
+        # Colored
+        badge_col = installer.format_status_badge(installer.STATUS_CONFIGURED, width=19, use_color=True)
+        self.assertIn(installer.GREEN, badge_col)
+        self.assertIn(installer.RESET, badge_col)
+
+    def test_get_harness_status_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Path(tmpdir) / "mcp.json"
+            orig_fn = installer.get_antigravity_config_path
+            installer.get_antigravity_config_path = lambda: cfg
+
+            antigravity_item = next(item for item in installer.HARNESS_REGISTRY if item["id"] == "antigravity")
+
+            try:
+                # 1. When detect() is False -> STATUS_NOT_INSTALLED
+                fake_item = dict(antigravity_item)
+                fake_item["detect"] = lambda: False
+                self.assertEqual(installer.get_harness_status(fake_item), installer.STATUS_NOT_INSTALLED)
+
+                fake_item = dict(antigravity_item)
+                fake_item["detect"] = lambda: True
+
+                # 2. When config file does not exist -> STATUS_READY
+                self.assertEqual(installer.get_harness_status(fake_item), installer.STATUS_READY)
+
+                # 3. When legacy 'db' entry exists -> STATUS_NEEDS_UPDATE
+                installer.write_json_file(cfg, {"mcpServers": {"db": {"command": "db-grep", "args": ["--server"]}}})
+                self.assertEqual(installer.get_harness_status(fake_item), installer.STATUS_NEEDS_UPDATE)
+
+                # 4. When db-grep has legacy --server arg -> STATUS_NEEDS_UPDATE
+                installer.write_json_file(cfg, {"mcpServers": {"db-grep": {"command": "db-grep", "args": ["--server"]}}})
+                self.assertEqual(installer.get_harness_status(fake_item), installer.STATUS_NEEDS_UPDATE)
+
+                # 5. When db-grep has modern server arg -> STATUS_CONFIGURED
+                installer.write_json_file(cfg, {"mcpServers": {"db-grep": {"command": "db-grep", "args": ["server"]}}})
+                self.assertEqual(installer.get_harness_status(fake_item), installer.STATUS_CONFIGURED)
+            finally:
+                installer.get_antigravity_config_path = orig_fn
+
 
 if __name__ == "__main__":
     unittest.main()

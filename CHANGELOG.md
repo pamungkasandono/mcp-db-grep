@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Interactive Harness Selection UI**: Redesigned `db-grep install` menu with aligned tabular columns, intelligent path shortening (`~`), responsive terminal wrapping, and ANSI color-coded status badges:
+  - `✓ configured` (green) for up-to-date clients.
+  - `▲ update needed` (yellow) for clients running legacy `db` server names or deprecated `--server` flags.
+  - `○ ready to install` (cyan) for detected clients ready for initial setup.
+  - `· not installed` (dim) for harnesses not found on the system.
+
 ## [0.6.0] - 2026-11-19
 
 ### Changed
