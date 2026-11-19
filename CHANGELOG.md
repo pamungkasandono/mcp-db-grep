@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
 ### Added
 - **`search_columns` MCP Tool**: Fast cross-table and cross-schema column search (`*pattern*`, `%...%`) to quickly locate where specific business fields (e.g. `CIF_NUMBER`, `NIK`, `KODE_CABANG`) are stored across PostgreSQL, MySQL, and Oracle.
 - **`sample_table` MCP Tool**: 1-click preview of 1–50 actual data rows (default: 5) from a table or view without manually authoring SQL or thinking about database limit dialects. Automatically applies `ROWNUM <= N` for Oracle and `LIMIT N` for PostgreSQL/MySQL.
