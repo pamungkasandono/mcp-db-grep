@@ -89,7 +89,7 @@ approval_timeout_s = 110      # auto-reject after 110s without response
 history_limit = 20           # replay recent audit activity before monitor opened (0 = off)
 
 [defaults]
-allow_metadata = ["read"]     # list_tables, find_objects, search_columns & describe_table without prompt
+allow_metadata = ["read"]     # metadata tools (describe, relations, indexes, DDL) without prompt
 allow_data = []               # data queries require approval unless covered by allow_tables
 max_rows = 1000               # default maximum rows returned per query
 timeout_ms = 10000            # default query timeout in milliseconds
@@ -193,6 +193,29 @@ db-grep ping postgres:inventory-core oracle:payroll-prod
 db-grep ping pgsql:inventory-core ora:payroll-prod my:orders-app
 ```
 *(Passing a short name without prefix pings all matching databases across drivers; use `postgres:<name>` / `pgsql:<name>`, `oracle:<name>` / `ora:<name>`, or `mysql:<name>` / `my:<name>` to target a specific driver. Also available as AI MCP tool `check_connection(db="all")`, without interactive monitor approval).*
+
+---
+
+## AI MCP Tools Reference
+
+All responses use token-efficient columnar JSON `{"columns": [...], "rows": [...]}` (50–70% context savings).
+
+| MCP Tool | Approval Gate | Description |
+| :--- | :---: | :--- |
+| `check_config` | **No** | Validate `config.toml` syntax, permissions, and credential interpolation. |
+| `check_connection` | **No** | Health-check ping & latency test across database connections. |
+| `list_databases` | **No** | List configured databases, driver types, and descriptions. |
+| `find_objects` | **Metadata** | Database-level keyword search for tables/views across schemas. |
+| `search_columns` | **Metadata** | Cross-schema column search to locate where specific fields live. |
+| `list_tables` | **Metadata** | List tables and views within a specific schema. |
+| `describe_table` | **Metadata** | Column specifications with precision, `[PK]`, `[FK]`, `[UNIQUE]`, `[DEFAULT]`, and comments. Set `compact=True` for minimal output. |
+| `describe_relations`| **Metadata** | Map incoming and outgoing foreign key relationships for a table. |
+| `list_indexes` | **Metadata** | List table indexes, column lists, uniqueness, and index types. |
+| `get_object_ddl` | **Metadata** | Retrieve exact DDL definition of a table or view for analysis. |
+| `sample_table` | **Data** *(Auto if allow_metadata)* | Fast 1–50 rows preview (default 5 rows) with dialect-specific LIMIT. |
+| `query` | **Data** | Execute read-only `SELECT`/`WITH` queries. Requires interactive approval. |
+
+*(Tools marked **Metadata** run automatically without terminal prompt when `allow_metadata = ["read"]` (default), unless accessing tables defined under `restricted_tables`).*
 
 ---
 
