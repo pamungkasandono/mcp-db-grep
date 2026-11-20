@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Foreign Key Relationship Mapping (`describe_relations`)**:
+  - Added new MCP tool to map both incoming and outgoing foreign key relationships for any table across PostgreSQL, MySQL, and Oracle.
+  - Returns directional relations (`OUTGOING` vs `INCOMING`), constraint names, referenced tables and columns, and `ON DELETE` / `ON UPDATE` actions to guide safe schema migrations and join planning.
+- **Index Inspection Tool (`list_indexes`)**:
+  - Added new MCP tool to inspect existing indexes, column ordering, uniqueness, and index types (e.g. `BTREE`, `NORMAL`) on tables across supported database engines.
+- **DDL Definition Retrieval (`get_object_ddl`)**:
+  - Added new MCP tool to extract exact `CREATE TABLE` and `CREATE VIEW` definitions directly from database catalogs (`pg_get_viewdef`, `SHOW CREATE`, `DBMS_METADATA.GET_DDL`), aiding view query analysis and migration authoring.
+
 ### Changed
+- **Enriched Column Schema Metadata in `describe_table`**:
+  - Expanded standard `describe_table` output to include exact data type precision and scale (e.g. `varchar(255)`, `numeric(15,2)`), constraint markers (`[PK]`, `[FK -> target]`, `[UNIQUE]`), default values (`[DEFAULT: val]`), and column comments.
+  - Retains compact string format (`COL: TYPE [TAGS] -- comment`) to minimize LLM token overhead while providing complete structural context.
 - **Token-Efficient Columnar Format for Tool Results**:
   - Switched query and object search tools (`query`, `sample_table`, `find_objects`, `search_columns`, `list_tables`) to return compact columnar tables (`{"columns": [...], "rows": [[...], ...]}`), cutting LLM context token usage by 50%–70%.
 - **Unified Concise Schema Format for `describe_table`**:
