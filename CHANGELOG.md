@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-20
+
 ### Added
 - **Foreign Key Relationship Mapping (`describe_relations`)**:
   - Added new MCP tool to map both incoming and outgoing foreign key relationships for any table across PostgreSQL, MySQL, and Oracle.
