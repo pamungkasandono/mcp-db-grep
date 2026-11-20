@@ -496,6 +496,41 @@ dsn = "hr/hr@localhost/hr"
                 self.assertIn("error_hint", res)
                 self.assertIn("compilation errors", res["error_hint"])
 
+            # Test 4: Enriched metadata (PK, FK, UNIQUE, DEFAULT, comments)
+            enriched_rows = json.dumps([
+                {
+                    "column_name": "id",
+                    "data_type": "bigint",
+                    "is_nullable": "NO",
+                    "constraint_type": "PRIMARY KEY",
+                    "column_default": "nextval('users_id_seq'::regclass)",
+                    "column_comment": "Primary internal identifier",
+                },
+                {
+                    "column_name": "email",
+                    "data_type": "varchar(255)",
+                    "is_nullable": "NO",
+                    "constraint_type": "UNIQUE",
+                    "column_default": None,
+                },
+                {
+                    "column_name": "dept_id",
+                    "data_type": "integer",
+                    "is_nullable": "YES",
+                    "foreign_table": "departments",
+                    "column_default": "1",
+                },
+            ])
+            with patch.object(server, "execute", return_value=enriched_rows):
+                res = json.loads(asyncio.run(server.describe_table("hr", "users", "hr · desc", compact=False)))
+                self.assertIn("[PK]", res["columns"][0])
+                self.assertIn("[NOT NULL]", res["columns"][0])
+                self.assertIn("Primary internal identifier", res["columns"][0])
+                self.assertIn("[UNIQUE]", res["columns"][1])
+                self.assertIn("[NOT NULL]", res["columns"][1])
+                self.assertIn("[FK -> departments]", res["columns"][2])
+                self.assertIn("[DEFAULT: 1]", res["columns"][2])
+
     def test_oracle_limit_error_hint(self):
         ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "ora@localhost/db"})
         mock_cursor = MagicMock()

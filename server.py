@@ -623,6 +623,46 @@ class DB:
 
 
 class Postgres(DB):
+    DESC_SQL = (
+        "SELECT "
+        "  c.column_name, "
+        "  CASE "
+        "    WHEN c.data_type = 'character varying' AND c.character_maximum_length IS NOT NULL "
+        "      THEN 'varchar(' || c.character_maximum_length || ')' "
+        "    WHEN c.data_type = 'character' AND c.character_maximum_length IS NOT NULL "
+        "      THEN 'char(' || c.character_maximum_length || ')' "
+        "    WHEN c.data_type = 'numeric' AND c.numeric_precision IS NOT NULL "
+        "      THEN 'numeric(' || c.numeric_precision || COALESCE(',' || c.numeric_scale, '') || ')' "
+        "    ELSE c.data_type "
+        "  END AS data_type, "
+        "  c.is_nullable, "
+        "  c.column_default, "
+        "  (SELECT string_agg(tc.constraint_type, ', ') "
+        "   FROM information_schema.table_constraints tc "
+        "   JOIN information_schema.key_column_usage kcu "
+        "     ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name "
+        "   WHERE kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name "
+        "  ) AS constraint_type, "
+        "  (SELECT ccu.table_name "
+        "   FROM information_schema.table_constraints tc "
+        "   JOIN information_schema.key_column_usage kcu "
+        "     ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema AND tc.table_name = kcu.table_name "
+        "   JOIN information_schema.constraint_column_usage ccu "
+        "     ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema "
+        "   WHERE tc.constraint_type = 'FOREIGN KEY' "
+        "     AND kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name "
+        "   LIMIT 1 "
+        "  ) AS foreign_table, "
+        "  (SELECT pg_catalog.col_description(c2.oid, c.ordinal_position::int) "
+        "   FROM pg_catalog.pg_class c2 "
+        "   JOIN pg_catalog.pg_namespace n2 ON n2.oid = c2.relnamespace "
+        "   WHERE n2.nspname = c.table_schema AND c2.relname = c.table_name "
+        "  ) AS column_comment "
+        "FROM information_schema.columns c "
+        "WHERE c.table_schema = %s AND c.table_name = %s "
+        "ORDER BY c.ordinal_position"
+    )
+
     @property
     def default_schema(self):
         return self.cfg.get("schema", "public")
@@ -650,6 +690,26 @@ class Postgres(DB):
 
 
 class MySQL(DB):
+    DESC_SQL = (
+        "SELECT "
+        "  c.COLUMN_NAME AS column_name, "
+        "  c.COLUMN_TYPE AS data_type, "
+        "  c.IS_NULLABLE AS is_nullable, "
+        "  c.COLUMN_DEFAULT AS column_default, "
+        "  c.COLUMN_KEY AS column_key, "
+        "  (SELECT kcu.REFERENCED_TABLE_NAME "
+        "   FROM information_schema.KEY_COLUMN_USAGE kcu "
+        "   WHERE kcu.TABLE_SCHEMA = c.TABLE_SCHEMA "
+        "     AND kcu.TABLE_NAME = c.TABLE_NAME "
+        "     AND kcu.COLUMN_NAME = c.COLUMN_NAME "
+        "     AND kcu.REFERENCED_TABLE_NAME IS NOT NULL "
+        "   LIMIT 1) AS foreign_table, "
+        "  c.COLUMN_COMMENT AS column_comment "
+        "FROM information_schema.columns c "
+        "WHERE c.TABLE_SCHEMA = %s AND c.TABLE_NAME = %s "
+        "ORDER BY c.ORDINAL_POSITION"
+    )
+
     @property
     def default_schema(self):
         if "schema" in self.cfg:
@@ -749,16 +809,43 @@ class Oracle(DB):
                 "SELECT view_name AS table_name FROM all_views WHERE owner = UPPER(:1) "
                 "ORDER BY table_name")
     DESC_SQL = (
-        "SELECT c.column_name, c.data_type, c.nullable, o.status "
+        "SELECT "
+        "  c.column_name, "
+        "  CASE "
+        "    WHEN c.data_type IN ('VARCHAR2', 'CHAR', 'NVARCHAR2') AND c.char_length > 0 "
+        "      THEN c.data_type || '(' || c.char_length || ')' "
+        "    WHEN c.data_type = 'NUMBER' AND c.data_precision IS NOT NULL "
+        "      THEN 'NUMBER(' || c.data_precision || NVL2(c.data_scale, ',' || c.data_scale, '') || ')' "
+        "    ELSE c.data_type "
+        "  END AS data_type, "
+        "  c.nullable AS is_nullable, "
+        "  c.data_default AS column_default, "
+        "  o.status, "
+        "  (SELECT LISTAGG(con.constraint_type, ', ') WITHIN GROUP (ORDER BY con.constraint_type) "
+        "   FROM all_constraints con "
+        "   JOIN all_cons_columns col ON con.owner = col.owner AND con.constraint_name = col.constraint_name "
+        "   WHERE con.owner = c.owner AND col.table_name = c.table_name AND col.column_name = c.column_name "
+        "     AND con.constraint_type IN ('P', 'U') "
+        "  ) AS constraint_type, "
+        "  (SELECT r_con.table_name "
+        "   FROM all_constraints con "
+        "   JOIN all_cons_columns col ON con.owner = col.owner AND con.constraint_name = col.constraint_name "
+        "   JOIN all_constraints r_con ON con.r_owner = r_con.owner AND con.r_constraint_name = r_con.constraint_name "
+        "   WHERE con.owner = c.owner AND col.table_name = c.table_name AND col.column_name = c.column_name "
+        "     AND con.constraint_type = 'R' AND ROWNUM = 1 "
+        "  ) AS foreign_table, "
+        "  (SELECT com.comments FROM all_col_comments com "
+        "   WHERE com.owner = c.owner AND com.table_name = c.table_name AND com.column_name = c.column_name "
+        "  ) AS column_comment "
         "FROM all_tab_columns c "
-        "LEFT JOIN all_objects o ON ("
+        "LEFT JOIN all_objects o ON ( "
         "    o.owner = c.owner AND o.object_name = c.table_name "
-        "    AND o.object_type IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW')"
+        "    AND o.object_type IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW') "
         ") "
         "WHERE (c.owner = UPPER(:1) AND c.table_name = UPPER(:2)) "
-        "   OR (c.owner, c.table_name) IN ("
+        "   OR (c.owner, c.table_name) IN ( "
         "       SELECT table_owner, table_name FROM all_synonyms "
-        "       WHERE owner IN (UPPER(:1), 'PUBLIC') AND synonym_name = UPPER(:2)"
+        "       WHERE owner IN (UPPER(:1), 'PUBLIC') AND synonym_name = UPPER(:2) "
         "   ) "
         "ORDER BY c.column_id"
     )
@@ -1552,9 +1639,42 @@ async def describe_table(
         if compact:
             cols_out.append(f"{col_name}: {col_type}")
         else:
+            tags = []
+            cons_str = str(r_low.get("constraint_type") or r_low.get("constraints") or "").upper()
+            col_key = str(r_low.get("column_key") or "").upper()
+
+            # Primary Key
+            if "PRIMARY" in cons_str or "P" in [x.strip() for x in cons_str.split(",")] or col_key == "PRI":
+                tags.append("[PK]")
+
+            # Foreign Key
+            fk_tgt = r_low.get("foreign_table") or r_low.get("fk_target")
+            if fk_tgt and str(fk_tgt).strip():
+                tags.append(f"[FK -> {str(fk_tgt).strip()}]")
+
+            # Unique Key
+            if "UNIQUE" in cons_str or "U" in [x.strip() for x in cons_str.split(",")] or col_key == "UNI":
+                tags.append("[UNIQUE]")
+
+            # Default value
+            def_val = r_low.get("column_default")
+            if def_val is not None:
+                def_str = str(def_val).strip()
+                if def_str and def_str.upper() != "NULL":
+                    if len(def_str) > 30:
+                        def_str = def_str[:27] + "..."
+                    tags.append(f"[DEFAULT: {def_str}]")
+
+            # Nullability
             is_non_null = str(nullable).strip().upper() in ("NO", "N", "FALSE", "0")
-            not_null_tag = " [NOT NULL]" if is_non_null else ""
-            cols_out.append(f"{col_name}: {col_type}{not_null_tag}")
+            if is_non_null:
+                tags.append("[NOT NULL]")
+
+            comment = r_low.get("column_comment")
+            comment_suffix = f" -- {comment.strip()}" if comment and str(comment).strip() else ""
+
+            tag_str = (" " + " ".join(tags)) if tags else ""
+            cols_out.append(f"{col_name}: {col_type}{tag_str}{comment_suffix}")
 
     if status == "INVALID":
         error_hint = "View has compilation errors in database (status: INVALID). Querying this view will fail with ORA-04063."
