@@ -641,6 +641,31 @@ dsn = "hr/hr@localhost/hr"
         self.assertEqual(params_ora[0], "USERS")
         self.assertEqual(params_ora[1], "HR")
 
+    def test_get_object_ddl_dialect_queries(self):
+        # 1. Postgres Table
+        pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test", "schema": "public"})
+        sql_pg_tbl, params_pg_tbl = pg.get_ddl_query("users", object_type="TABLE")
+        self.assertIn("CREATE TABLE", sql_pg_tbl)
+        self.assertIn("information_schema.columns", sql_pg_tbl)
+        self.assertEqual(params_pg_tbl[0], "users")
+
+        # 2. Postgres View
+        sql_pg_vw, params_pg_vw = pg.get_ddl_query("active_users", object_type="VIEW")
+        self.assertIn("pg_get_viewdef", sql_pg_vw)
+        self.assertEqual(params_pg_vw[0], "active_users")
+
+        # 3. MySQL
+        my = server.MySQL("my_test", {"type": "mysql", "dsn": "mysql://localhost/test", "schema": "store"})
+        sql_my, params_my = my.get_ddl_query("orders")
+        self.assertIn("SHOW CREATE TABLE `store`.`orders`", sql_my)
+        self.assertEqual(params_my, ())
+
+        # 4. Oracle
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "user/pw@localhost/test", "schema": "HR"})
+        sql_ora, params_ora = ora.get_ddl_query("employees", object_type="TABLE")
+        self.assertIn("DBMS_METADATA.GET_DDL", sql_ora)
+        self.assertEqual(params_ora, ("TABLE", "EMPLOYEES", "HR"))
+
     def test_sample_table_and_search_columns_mcp_tools(self):
         sample_toml = b"""[monitor]
 port = 48260
@@ -699,6 +724,19 @@ dsn = "postgres://localhost/crm"
                 self.assertEqual(call_args[0], "list_indexes")
                 self.assertIn("index_name", call_args[3])
                 self.assertEqual(json.loads(res)["rows"][0][0], "pk_users")
+
+            # Test get_object_ddl tool execution
+            ddl_ret = json.dumps({
+                "columns": ["ddl"],
+                "rows": [["CREATE TABLE crm.users (id bigint PRIMARY KEY);"]],
+            })
+            with patch.object(server, "execute", return_value=ddl_ret) as mock_exec:
+                res = asyncio.run(server.get_object_ddl("crm", "users", "crm · get ddl"))
+                mock_exec.assert_called_once()
+                self.assertEqual(mock_exec.call_args[0][0], "get_object_ddl")
+                self.assertEqual(mock_exec.call_args.kwargs.get("table_for_auth"), "users")
+                self.assertEqual(json.loads(res)["object"], "users")
+                self.assertIn("CREATE TABLE", json.loads(res)["ddl"])
 
     def test_describe_table_handles_columnar_and_legacy_list(self):
         sample_toml = b"""[monitor]

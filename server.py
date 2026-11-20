@@ -614,6 +614,45 @@ class DB:
         )
         return sql, (table_clean, target_schema, target_schema)
 
+    def get_ddl_query(self, object_name: str, object_type: str = "TABLE", schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(object_name, schema)
+        target_schema = target_schema or self.default_schema
+        ot = (object_type or "TABLE").strip().upper()
+        if ot == "VIEW":
+            sql = (
+                "SELECT "
+                "  'CREATE OR REPLACE VIEW ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || ' AS\\n' || "
+                "  pg_get_viewdef(c.oid, true) AS ddl "
+                "FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE c.relname = %s AND (n.nspname = %s OR %s = '') AND c.relkind IN ('v', 'm')"
+            )
+            return sql, (table_clean, target_schema, target_schema)
+        else:
+            sql = (
+                "SELECT "
+                "  'CREATE TABLE ' || quote_ident(c.table_schema) || '.' || quote_ident(c.table_name) || ' (\\n' || "
+                "  string_agg( "
+                "    '  ' || quote_ident(c.column_name) || ' ' || "
+                "    CASE "
+                "      WHEN c.data_type = 'character varying' AND c.character_maximum_length IS NOT NULL "
+                "        THEN 'varchar(' || c.character_maximum_length || ')' "
+                "      WHEN c.data_type = 'character' AND c.character_maximum_length IS NOT NULL "
+                "        THEN 'char(' || c.character_maximum_length || ')' "
+                "      WHEN c.data_type = 'numeric' AND c.numeric_precision IS NOT NULL "
+                "        THEN 'numeric(' || c.numeric_precision || COALESCE(',' || c.numeric_scale, '') || ')' "
+                "      ELSE c.data_type "
+                "    END || "
+                "    CASE WHEN c.column_default IS NOT NULL THEN ' DEFAULT ' || c.column_default ELSE '' END || "
+                "    CASE WHEN c.is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END, "
+                "    E',\\n' ORDER BY c.ordinal_position "
+                "  ) || E'\\n);' AS ddl "
+                "FROM information_schema.columns c "
+                "WHERE c.table_name = %s AND (c.table_schema = %s OR %s = '') "
+                "GROUP BY c.table_schema, c.table_name"
+            )
+            return sql, (table_clean, target_schema, target_schema)
+
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
@@ -881,6 +920,12 @@ class MySQL(DB):
         )
         return sql, (table_clean, target_schema, target_schema)
 
+    def get_ddl_query(self, object_name: str, object_type: str = "TABLE", schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(object_name, schema)
+        target_schema = target_schema or self.default_schema
+        ident = f"`{target_schema}`.`{table_clean}`" if target_schema else f"`{table_clean}`"
+        return f"SHOW CREATE TABLE {ident}", ()
+
     def connect(self):
         import pymysql
         dsn = self.get_dsn()
@@ -1085,6 +1130,15 @@ class Oracle(DB):
             "ORDER BY is_primary DESC, is_unique DESC, index_name"
         )
         return sql, (table_clean.upper(), target_schema)
+
+    def get_ddl_query(self, object_name: str, object_type: str = "TABLE", schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(object_name, schema)
+        target_schema = (target_schema or self.default_schema).upper()
+        ot = (object_type or "TABLE").strip().upper()
+        if ot not in ("TABLE", "VIEW", "INDEX", "SYNONYM", "SEQUENCE"):
+            ot = "TABLE"
+        sql = "SELECT DBMS_METADATA.GET_DDL(UPPER(:1), UPPER(:2), UPPER(:3)) AS ddl FROM DUAL"
+        return sql, (ot, table_clean.upper(), target_schema)
 
     def connect(self):
         import oracledb
@@ -1314,7 +1368,7 @@ check_konteks = check_context
 
 
 # ---------- approval gate ----------
-async def execute(tool, d, context, sql, params=(), reject=None):
+async def execute(tool, d, context, sql, params=(), reject=None, table_for_auth=""):
     context = check_context(context)
 
     # Evaluate access control rules
@@ -1342,7 +1396,7 @@ async def execute(tool, d, context, sql, params=(), reject=None):
             can_auto_allow = False
 
     elif tool in ("describe_table", "describe_relations", "list_indexes", "get_object_ddl"):
-        table_name = params[1] if (tool == "describe_table" and len(params) > 1) else (params[0] if params else "")
+        table_name = table_for_auth or (params[1] if (tool == "describe_table" and len(params) > 1) else (params[0] if params else ""))
         table_simple = str(table_name).split(".")[-1].strip().lower()
         if table_simple:
             queried_tables = {table_simple}
@@ -1878,6 +1932,42 @@ async def list_indexes(
     d = get_db(db)
     sql, params = d.get_indexes_query(table, schema=schema)
     return await execute("list_indexes", d, context, sql, params)
+
+
+@mcp.tool()
+async def get_object_ddl(
+    db: DbName,
+    object_name: str,
+    context: Context,
+    object_type: str = "TABLE",
+    schema: str = "",
+) -> str:
+    """Retrieve the exact DDL (schema definition) of a table or view.
+    Useful for analyzing complex view queries, triggers, or exact table creation options.
+    Auto-allowed when allow_metadata permits 'read'."""
+    d = get_db(db)
+    target_schema, table_clean = d._parse_and_validate_table(object_name, schema)
+    sql, params = d.get_ddl_query(object_name, object_type=object_type, schema=schema)
+    res_json = await execute("get_object_ddl", d, context, sql, params, table_for_auth=table_clean)
+    try:
+        raw_rows = json.loads(res_json)
+    except Exception:
+        return res_json
+
+    rows = raw_rows.get("rows", []) if isinstance(raw_rows, dict) else []
+    ddl_str = ""
+    if rows and len(rows[0]) > 0:
+        ddl_str = str(rows[0][1] if len(rows[0]) > 1 else rows[0][0])
+
+    target_name = f"{target_schema}.{table_clean}" if target_schema else table_clean
+    out = {
+        "object": target_name,
+        "type": object_type.upper(),
+        "ddl": ddl_str.strip(),
+    }
+    if not ddl_str:
+        out["status"] = "NOT_FOUND"
+    return json.dumps(out)
 
 
 @mcp.tool()
