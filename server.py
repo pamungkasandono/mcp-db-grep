@@ -592,6 +592,28 @@ class DB:
         )
         return sql, params
 
+    def get_indexes_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = target_schema or self.default_schema
+        sql = (
+            "SELECT "
+            "  i.relname AS index_name, "
+            "  string_agg(a.attname, ', ' ORDER BY array_position(ix.indkey, a.attnum)) AS columns, "
+            "  CASE WHEN ix.indisunique THEN 'YES' ELSE 'NO' END AS is_unique, "
+            "  CASE WHEN ix.indisprimary THEN 'YES' ELSE 'NO' END AS is_primary, "
+            "  am.amname AS index_type "
+            "FROM pg_index ix "
+            "JOIN pg_class t ON t.oid = ix.indrelid "
+            "JOIN pg_class i ON i.oid = ix.indexrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "JOIN pg_am am ON am.oid = i.relam "
+            "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) "
+            "WHERE t.relname = %s AND (n.nspname = %s OR %s = '') "
+            "GROUP BY i.relname, ix.indisunique, ix.indisprimary, am.amname "
+            "ORDER BY is_primary DESC, is_unique DESC, index_name"
+        )
+        return sql, (table_clean, target_schema, target_schema)
+
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
@@ -842,6 +864,23 @@ class MySQL(DB):
         )
         return sql, params
 
+    def get_indexes_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = target_schema or self.default_schema
+        sql = (
+            "SELECT "
+            "  INDEX_NAME AS index_name, "
+            "  GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') AS columns, "
+            "  CASE WHEN NON_UNIQUE = 0 THEN 'YES' ELSE 'NO' END AS is_unique, "
+            "  CASE WHEN INDEX_NAME = 'PRIMARY' THEN 'YES' ELSE 'NO' END AS is_primary, "
+            "  INDEX_TYPE AS index_type "
+            "FROM information_schema.STATISTICS "
+            "WHERE TABLE_NAME = %s AND (TABLE_SCHEMA = %s OR %s = '') "
+            "GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE "
+            "ORDER BY is_primary DESC, is_unique DESC, index_name"
+        )
+        return sql, (table_clean, target_schema, target_schema)
+
     def connect(self):
         import pymysql
         dsn = self.get_dsn()
@@ -1021,6 +1060,29 @@ class Oracle(DB):
             "    (c_pk.table_name = UPPER(:1) AND (c_pk.owner = UPPER(:2) OR :2 IS NULL))"
             "  ) "
             "ORDER BY direction DESC, source_table, target_table"
+        )
+        return sql, (table_clean.upper(), target_schema)
+
+    def get_indexes_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = (target_schema or self.default_schema).upper()
+        sql = (
+            "SELECT "
+            "  i.index_name, "
+            "  LISTAGG(c.column_name, ', ') WITHIN GROUP (ORDER BY c.column_position) AS columns, "
+            "  CASE WHEN i.uniqueness = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS is_unique, "
+            "  CASE WHEN EXISTS ( "
+            "    SELECT 1 FROM all_constraints con "
+            "    WHERE con.owner = i.owner AND con.table_name = i.table_name "
+            "      AND con.constraint_name = i.index_name AND con.constraint_type = 'P' "
+            "  ) THEN 'YES' ELSE 'NO' END AS is_primary, "
+            "  i.index_type "
+            "FROM all_indexes i "
+            "JOIN all_ind_columns c "
+            "  ON i.owner = c.index_owner AND i.index_name = c.index_name "
+            "WHERE i.table_name = UPPER(:1) AND (i.owner = UPPER(:2) OR :2 IS NULL) "
+            "GROUP BY i.owner, i.table_name, i.index_name, i.uniqueness, i.index_type "
+            "ORDER BY is_primary DESC, is_unique DESC, index_name"
         )
         return sql, (table_clean.upper(), target_schema)
 
@@ -1801,6 +1863,21 @@ async def describe_relations(
     d = get_db(db)
     sql, params = d.get_relations_query(table, schema=schema)
     return await execute("describe_relations", d, context, sql, params)
+
+
+@mcp.tool()
+async def list_indexes(
+    db: DbName,
+    table: str,
+    context: Context,
+    schema: str = "",
+) -> str:
+    """List all indexes on a table including index name, column list, index type (BTREE, GIN, etc.), and uniqueness.
+    Returns matching indexes in columnar format {'columns': [...], 'rows': [...]}.
+    Auto-allowed when allow_metadata permits 'read'."""
+    d = get_db(db)
+    sql, params = d.get_indexes_query(table, schema=schema)
+    return await execute("list_indexes", d, context, sql, params)
 
 
 @mcp.tool()

@@ -618,6 +618,29 @@ dsn = "hr/hr@localhost/hr"
         self.assertEqual(params_ora[0], "EMPLOYEES")
         self.assertEqual(params_ora[1], "HR")
 
+    def test_list_indexes_dialect_queries(self):
+        # 1. Postgres
+        pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test", "schema": "public"})
+        sql_pg, params_pg = pg.get_indexes_query("users")
+        self.assertIn("FROM pg_index ix", sql_pg)
+        self.assertIn("ix.indisunique", sql_pg)
+        self.assertEqual(params_pg[0], "users")
+
+        # 2. MySQL
+        my = server.MySQL("my_test", {"type": "mysql", "dsn": "mysql://localhost/test", "schema": "store"})
+        sql_my, params_my = my.get_indexes_query("users")
+        self.assertIn("information_schema.STATISTICS", sql_my)
+        self.assertIn("INDEX_NAME", sql_my)
+        self.assertEqual(params_my[0], "users")
+
+        # 3. Oracle
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "user/pw@localhost/test", "schema": "HR"})
+        sql_ora, params_ora = ora.get_indexes_query("users")
+        self.assertIn("all_indexes", sql_ora)
+        self.assertIn("all_ind_columns", sql_ora)
+        self.assertEqual(params_ora[0], "USERS")
+        self.assertEqual(params_ora[1], "HR")
+
     def test_sample_table_and_search_columns_mcp_tools(self):
         sample_toml = b"""[monitor]
 port = 48260
@@ -663,6 +686,19 @@ dsn = "postgres://localhost/crm"
                 self.assertEqual(call_args[0], "describe_relations")
                 self.assertIn("OUTGOING", call_args[3])
                 self.assertEqual(json.loads(res)["rows"][0][1], "fk_orders_user")
+
+            # Test list_indexes tool execution
+            idx_ret = json.dumps({
+                "columns": ["index_name", "columns", "is_unique", "is_primary", "index_type"],
+                "rows": [["pk_users", "id", "YES", "YES", "btree"]],
+            })
+            with patch.object(server, "execute", return_value=idx_ret) as mock_exec:
+                res = asyncio.run(server.list_indexes("crm", "users", "crm · get indexes"))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "list_indexes")
+                self.assertIn("index_name", call_args[3])
+                self.assertEqual(json.loads(res)["rows"][0][0], "pk_users")
 
     def test_describe_table_handles_columnar_and_legacy_list(self):
         sample_toml = b"""[monitor]
