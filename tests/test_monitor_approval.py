@@ -1,6 +1,8 @@
 import asyncio
 import io
 import json
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -288,6 +290,35 @@ class TestMonitorApproval(unittest.TestCase):
         self.assertIn("list_databases", out)
         self.assertIn("check_config", out)
         self.assertIn("VALID", out)
+
+    def test_show_table_horizontal_when_fits(self):
+        stdout_buf = io.StringIO()
+        with patch("sys.stdout", stdout_buf), patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 24))):
+            monitor.show_table(["id", "name"], [["1", "Alice"], ["2", "Bob"]])
+        out = stdout_buf.getvalue()
+        self.assertIn("id  name", out)
+        self.assertIn("---", out)
+        self.assertIn("1   Alice", out)
+        self.assertNotIn("─── [1/2]", out)
+
+    def test_show_table_vertical_when_overflows(self):
+        stdout_buf = io.StringIO()
+        cols = [f"COL_{i}" for i in range(12)]
+        rows = [[f"VAL_{i}" for i in range(12)]]
+        with patch("sys.stdout", stdout_buf), patch("shutil.get_terminal_size", return_value=os.terminal_size((60, 24))):
+            monitor.show_table(cols, rows)
+        out = stdout_buf.getvalue()
+        self.assertIn("─── [1/1]", out)
+        self.assertIn("COL_0", out)
+        self.assertIn(": VAL_0", out)
+
+    def test_show_table_vertical_empty_rows(self):
+        stdout_buf = io.StringIO()
+        cols = [f"COL_{i}" for i in range(15)]
+        with patch("sys.stdout", stdout_buf), patch("shutil.get_terminal_size", return_value=os.terminal_size((50, 24))):
+            monitor.show_table(cols, [])
+        out = stdout_buf.getvalue()
+        self.assertIn("0 rows", out)
 
 
 if __name__ == "__main__":

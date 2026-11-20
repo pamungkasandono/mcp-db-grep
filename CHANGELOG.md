@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Switched query, sample, and search tool outputs (`query`, `sample_table`, `find_objects`, `search_columns`, `list_tables`) from array-of-objects (`[{"col": val}, ...]`) to a compact columnar structure (`{"columns": [...], "rows": [[...], ...]}`).
   - Eliminates repetitive column name keys across rows, reducing LLM token consumption by 50%–70% on database query responses.
   - Updated `describe_table` to seamlessly parse both columnar format and legacy list-of-dicts structures.
+- **Hybrid Table / Vertical Card Display in Monitor (`\\x auto` style)**:
+  - Dynamically detects terminal column width via `shutil.get_terminal_size()`.
+  - Renders compact horizontal tables when columns fit cleanly within terminal width.
+  - Automatically switches to aligned vertical card records (`─── [1/N] ───`) when queries return wide columns, eliminating line wrap corruption and unreadable terminal clutter.
 - **CLI Help & Subcommand Discoverability UX**:
   - Aligned command shorthands to the front (`[s] server`, `[m] monitor`, `[p] ping`, `[c] config`, `[i] install`, `[u] update`, `[d] driver`) in root `--help` for uniform visual scanning.
   - Added interactive `[c] Check / validate configuration` action directly into the `db-grep config` dashboard menu.

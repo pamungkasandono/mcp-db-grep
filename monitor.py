@@ -1,4 +1,4 @@
-import asyncio, json, os, re, sys, time, tomllib
+import asyncio, json, os, re, shutil, sys, time, tomllib
 from datetime import datetime
 from pathlib import Path
 
@@ -246,13 +246,36 @@ async def keyboard_listener():
 
 
 def show_table(cols, rows):
+    if not cols:
+        return
+    term_width = max(shutil.get_terminal_size((100, 24)).columns, 40)
     cell = lambda v: clean(v).replace("\n", " ")[:40]
     w = [max([len(cell(c))] + [len(cell(r[i])) for r in rows]) for i, c in enumerate(cols)]
-    line = lambda vals: "  ".join(cell(v).ljust(w[i]) for i, v in enumerate(vals))
-    print(line(cols))
-    print("  ".join("-" * x for x in w))
-    for r in rows:
-        print(line(r))
+    total_table_width = sum(w) + 2 * max(len(cols) - 1, 0)
+
+    # Hybrid mode: horizontal table if it fits cleanly in terminal, vertical cards if it overflows
+    if total_table_width <= term_width:
+        line = lambda vals: "  ".join(cell(v).ljust(w[i]) for i, v in enumerate(vals))
+        print(line(cols))
+        print("  ".join("-" * x for x in w))
+        for r in rows:
+            print(line(r))
+    else:
+        k_w = max(len(clean(c)) for c in cols)
+        v_max = max(term_width - k_w - 7, 40)
+        n = len(rows)
+        if n == 0:
+            print(f"{D}(0 rows, columns: {', '.join(cols)}){N}")
+            return
+        div_width = min(term_width, 60)
+        for idx, r in enumerate(rows):
+            header = f"─── [{idx + 1}/{n}] "
+            rule = "─" * max(div_width - len(header), 4)
+            print(f"{D}{header}{rule}{N}")
+            for i, c in enumerate(cols):
+                v = r[i] if i < len(r) else ""
+                v_clean = clean(v).replace("\n", " ")[:v_max]
+                print(f"  {D}{clean(c).ljust(k_w)}{N} : {v_clean}")
 
 
 async def reply(writer, msg):
