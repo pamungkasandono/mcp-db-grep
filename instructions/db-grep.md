@@ -47,6 +47,10 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
    - Use `list_tables` only when you need to inspect all objects inside a single known schema.
 2. **Use `search_columns` to locate tables storing specific business fields**:
    - E.g. search pattern `*CIF*`, `*NIK*`, `*KODE_CABANG*`, or `*INVOICE*` across schemas.
+3. **Use `sample_table` for quick data preview without authoring SQL**:
+   - Preview 1–50 actual rows (default 5) with automatic dialect-specific limits (`LIMIT N` for PostgreSQL/MySQL, `ROWNUM <= N` for Oracle).
+   - Runs automatically without manual terminal approval when `allow_metadata = ["read"]` (default), unless accessing tables defined under `restricted_tables`.
+   - Always prefer `sample_table` over executing raw `SELECT * ... LIMIT 5` via `query` to avoid unnecessary manual terminal approval prompts.
 
 ---
 

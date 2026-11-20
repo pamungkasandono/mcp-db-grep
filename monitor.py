@@ -26,6 +26,8 @@ lock = asyncio.Lock()  # one prompt or active output block at a time across sess
 stdin_lock = asyncio.Lock()  # prevent concurrent stdin access between prompt and background hotkey
 prompt_active = False  # True while waiting for prompt/menu user input
 sessions = set()
+# Legacy session tracking: retained for backward compatibility and test coverage.
+# In v0.8.0+, prompt 'a' persists per-table auto-allow (allow_tables in config.toml).
 auto_approved_sessions: dict[str, str] = {}  # {session_name: last_db_display}
 
 clean = lambda s: re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(s))  # strip escape codes
@@ -227,7 +229,7 @@ async def lock_sessions_interactive():
 
 
 async def keyboard_listener():
-    """Background task to listen for [l] lock hotkey when no prompt is active."""
+    """Background task to listen for [l] lock hotkey when active legacy auto-approved sessions exist."""
     while True:
         if prompt_active or not auto_approved_sessions or lock.locked() or stdin_lock.locked():
             await asyncio.sleep(0.08)

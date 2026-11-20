@@ -46,6 +46,35 @@ This happens when the operator pressed `n` (reject) in the terminal monitor.
    - Use the `question` tool (or prompt choice) to ask user:
      - "Retry query (I will approve in monitor)"
      - "Continue without database query"
+
+---
+
+## Case 3: Efficient Object & Schema Exploration
+1. **Always prefer `find_objects` over `list_tables` when searching for specific tables, views, or synonyms**:
+   - `find_objects` filters at the database engine level, prevents cap-limit truncation on enterprise databases, and searches across all accessible schemas (Oracle, PostgreSQL, MySQL).
+   - Use `list_tables` only when you need to inspect all objects inside a single known schema.
+2. **Use `search_columns` to locate tables storing specific business fields**:
+   - E.g. search pattern `*CIF*`, `*NIK*`, `*KODE_CABANG*`, or `*INVOICE*` across schemas.
+3. **Use `sample_table` for quick data preview without authoring SQL**:
+   - Preview 1–50 actual rows (default 5) with automatic dialect-specific limits (`LIMIT N` for PostgreSQL/MySQL, `ROWNUM <= N` for Oracle).
+   - Runs automatically without manual terminal approval when `allow_metadata = ["read"]` (default), unless accessing tables defined under `restricted_tables`.
+   - Always prefer `sample_table` over executing raw `SELECT * ... LIMIT 5` via `query` to avoid unnecessary manual terminal approval prompts.
+
+---
+
+## Case 4: Deep Metadata & Architectural Analysis (Zero-Approval Metadata Flow)
+All metadata inspection tools below are automatically allowed when `allow_metadata = ["read"]` (default). **DO NOT** execute raw SQL queries to system catalogs (`information_schema`, `pg_*`, `all_*`) via the `query` tool when these dedicated tools are available:
+
+1. **`describe_table` (Columns, Constraints, Precision, Defaults, Comments)**:
+   - Returns full column specifications: data type with precision/scale (e.g. `varchar(255)`, `numeric(15,2)`), `[PK]`, `[FK -> target]`, `[UNIQUE]`, `[DEFAULT: val]`, `[NOT NULL]`, and column comments.
+   - Use `compact=True` only for extremely wide tables (50+ columns) when you only need column names and base data types.
+2. **`describe_relations` (Foreign Key Relationship Mapping)**:
+   - Inspect incoming and outgoing foreign keys for a table before proposing table restructuring, schema changes, or cascading deletions.
+   - Returns directional mapping (`OUTGOING` vs `INCOMING`), constraint names, referenced tables/columns, and `ON DELETE` / `ON UPDATE` actions.
+3. **`list_indexes` (Index Inspection & Performance Diagnosis)**:
+   - Check existing indexes, column ordering, uniqueness, and index types (BTREE, GIN, etc.) before diagnosing slow queries or proposing new indexes.
+4. **`get_object_ddl` (Table & View Schema Definitions)**:
+   - Retrieve exact `CREATE TABLE` DDL or `CREATE VIEW` query definitions when analyzing complex view joins, stored logic, or writing database migration scripts.
 """
 
 SAMPLE_CONFIG = """[monitor]

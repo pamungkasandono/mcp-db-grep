@@ -241,15 +241,24 @@ All responses use token-efficient columnar JSON `{"columns": [...], "rows": [...
    ━━ 14:10:05 [A] query @ pgsql:my-postgres ━━
    my-project · get latest users
    SELECT id, username, email FROM users LIMIT 5;
-   Allow? [y]es once / [a]uto-approve session / [n]o: 
+   Tables  : users
+   Allow? [y]es once / [a]lways allow 'users' / [n]o: 
    ```
-   - Press **`y`**: Approve this single query; result table is displayed and rows are sent to AI.
-   - Press **`a`**: Enable **Auto-Approve Session** for `[A]`; all subsequent queries in this session run automatically until you lock it again.
-   - Press **`n`**: Query cancelled; AI stops immediately and explains why the query was needed.
-   - Press **`l`** *(anytime while `⚡ AUTO-APPROVE ON` is active)*: Lock auto-approve and restore manual `[y/n]` approval:
-     - **1 active session**: Locks immediately on pressing `l`.
-     - **2–4 active sessions**: Select session directly by pressing its key (`A` / `B` / `C` / `D`) or `*` / `Enter` to lock all.
-     - **5+ active sessions**: Displays a numbered session list supporting multi-select (`1`, `1,3`, `1-5`, or `all`).
+   - Press **`y`**: Approve this single query once; result table is displayed and rows are sent to AI.
+   - Press **`a`**: **Always allow** table(s); automatically appends `'users'` to `allow_tables` in `config.toml` so future queries against this table run without prompting.
+   - Press **`n`**: Query cancelled; AI stops immediately and explains why the data was needed.
+
+   *Protected Data Safeguard:*
+   If a query references sensitive data defined in `restricted_tables` or `restricted_columns` (e.g. `salary*`, `user_identity`), the monitor explicitly flags it and disables auto-allow persistence:
+   ```text
+   ━━ 14:10:05 [A] query @ pgsql:my-postgres ━━
+   my-project · get payroll
+   SELECT salary_amount FROM pegawai;
+   Tables  : pegawai
+   Columns : salary_amount
+   Reason  : restricted column(s): salary_amount
+   Allow? [y]es once / [n]o (auto-allow disabled: restricted data): 
+   ```
 
 *Forgot to start the monitor?*
 Don't worry! When a query runs, `db-grep` waits up to 25 seconds for you to open `db-grep monitor`. If not opened in time, the AI will pause safely and ask you to launch the monitor—it is strictly blocked from reading credentials or bypassing your database directly.
