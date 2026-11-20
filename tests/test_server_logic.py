@@ -479,11 +479,11 @@ dsn = "hr/hr@localhost/hr"
                 self.assertEqual(len(res["columns"]), 2)
                 self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
 
-            # Test 2: Compact mode
+            # Test 2: Compact mode (returns array of 'col: type' strings)
             with patch.object(server, "execute", return_value=mock_rows):
                 res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc", compact=True)))
-                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)"})
-                self.assertNotIn("nullable", res["columns"][0])
+                self.assertEqual(res["columns"][0], "EMP_ID: NUMBER(10)")
+                self.assertEqual(res["columns"][1], "NAME: VARCHAR2(50)")
 
             # Test 3: Object with INVALID status
             invalid_rows = json.dumps([
