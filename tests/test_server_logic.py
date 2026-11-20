@@ -594,6 +594,30 @@ dsn = "hr/hr@localhost/hr"
         self.assertIn("WHERE ROWNUM <=", sql_ora)
         self.assertEqual(params_ora, ("%nik%", "hr", 25))
 
+    def test_describe_relations_dialect_queries(self):
+        # 1. Postgres
+        pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test", "schema": "public"})
+        sql_pg, params_pg = pg.get_relations_query("orders")
+        self.assertIn("OUTGOING", sql_pg)
+        self.assertIn("INCOMING", sql_pg)
+        self.assertIn("information_schema.referential_constraints", sql_pg)
+        self.assertEqual(params_pg[0], "orders")
+
+        # 2. MySQL
+        my = server.MySQL("my_test", {"type": "mysql", "dsn": "mysql://localhost/test", "schema": "app"})
+        sql_my, params_my = my.get_relations_query("orders")
+        self.assertIn("information_schema.KEY_COLUMN_USAGE", sql_my)
+        self.assertIn("REFERENCED_TABLE_NAME IS NOT NULL", sql_my)
+        self.assertEqual(params_my[0], "orders")
+
+        # 3. Oracle
+        ora = server.Oracle("ora_test", {"type": "oracle", "dsn": "user/pw@localhost/test", "schema": "HR"})
+        sql_ora, params_ora = ora.get_relations_query("employees")
+        self.assertIn("all_constraints", sql_ora)
+        self.assertIn("constraint_type = 'R'", sql_ora)
+        self.assertEqual(params_ora[0], "EMPLOYEES")
+        self.assertEqual(params_ora[1], "HR")
+
     def test_sample_table_and_search_columns_mcp_tools(self):
         sample_toml = b"""[monitor]
 port = 48260
@@ -626,6 +650,19 @@ dsn = "postgres://localhost/crm"
                 self.assertEqual(call_args[4], ("cif%", 10))
                 self.assertEqual(json.loads(res)["columns"], ["schema_name", "table_name", "column_name", "data_type"])
                 self.assertEqual(json.loads(res)["rows"], [["public", "customers", "cif_no", "text"]])
+
+            # Test describe_relations tool execution
+            rel_ret = json.dumps({
+                "columns": ["direction", "constraint_name", "source_table", "source_column", "target_table", "target_column", "on_delete", "on_update"],
+                "rows": [["OUTGOING", "fk_orders_user", "public.orders", "user_id", "public.users", "id", "CASCADE", "NO ACTION"]],
+            })
+            with patch.object(server, "execute", return_value=rel_ret) as mock_exec:
+                res = asyncio.run(server.describe_relations("crm", "orders", "crm · get relations"))
+                mock_exec.assert_called_once()
+                call_args = mock_exec.call_args[0]
+                self.assertEqual(call_args[0], "describe_relations")
+                self.assertIn("OUTGOING", call_args[3])
+                self.assertEqual(json.loads(res)["rows"][0][1], "fk_orders_user")
 
     def test_describe_table_handles_columnar_and_legacy_list(self):
         sample_toml = b"""[monitor]

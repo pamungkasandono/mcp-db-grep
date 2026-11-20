@@ -557,6 +557,41 @@ class DB:
         )
         return sql, tuple(params)
 
+    def get_relations_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = target_schema or self.default_schema
+        sql = (
+            "SELECT "
+            "  CASE WHEN kcu.table_name = %s AND (kcu.table_schema = %s OR %s = '') THEN 'OUTGOING' ELSE 'INCOMING' END AS direction, "
+            "  tc.constraint_name, "
+            "  kcu.table_schema || '.' || kcu.table_name AS source_table, "
+            "  kcu.column_name AS source_column, "
+            "  ccu.table_schema || '.' || ccu.table_name AS target_table, "
+            "  ccu.column_name AS target_column, "
+            "  rc.delete_rule AS on_delete, "
+            "  rc.update_rule AS on_update "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+            "JOIN information_schema.referential_constraints rc "
+            "  ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema "
+            "JOIN information_schema.constraint_column_usage ccu "
+            "  ON rc.unique_constraint_name = ccu.constraint_name AND rc.unique_constraint_schema = ccu.constraint_schema "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' "
+            "  AND ("
+            "    (kcu.table_name = %s AND (kcu.table_schema = %s OR %s = '')) "
+            "    OR "
+            "    (ccu.table_name = %s AND (ccu.table_schema = %s OR %s = ''))"
+            "  ) "
+            "ORDER BY direction DESC, source_table, target_table"
+        )
+        params = (
+            table_clean, target_schema, target_schema,
+            table_clean, target_schema, target_schema,
+            table_clean, target_schema, target_schema,
+        )
+        return sql, params
+
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.max_rows = cfg.get("max_rows", 100)
@@ -776,6 +811,37 @@ class MySQL(DB):
         )
         return sql, tuple(params)
 
+    def get_relations_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = target_schema or self.default_schema
+        sql = (
+            "SELECT "
+            "  CASE WHEN kcu.TABLE_NAME = %s AND (kcu.TABLE_SCHEMA = %s OR %s = '') THEN 'OUTGOING' ELSE 'INCOMING' END AS direction, "
+            "  kcu.CONSTRAINT_NAME AS constraint_name, "
+            "  CONCAT(kcu.TABLE_SCHEMA, '.', kcu.TABLE_NAME) AS source_table, "
+            "  kcu.COLUMN_NAME AS source_column, "
+            "  CONCAT(kcu.REFERENCED_TABLE_SCHEMA, '.', kcu.REFERENCED_TABLE_NAME) AS target_table, "
+            "  kcu.REFERENCED_COLUMN_NAME AS target_column, "
+            "  rc.DELETE_RULE AS on_delete, "
+            "  rc.UPDATE_RULE AS on_update "
+            "FROM information_schema.KEY_COLUMN_USAGE kcu "
+            "JOIN information_schema.REFERENTIAL_CONSTRAINTS rc "
+            "  ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA "
+            "WHERE kcu.REFERENCED_TABLE_NAME IS NOT NULL "
+            "  AND ("
+            "    (kcu.TABLE_NAME = %s AND (kcu.TABLE_SCHEMA = %s OR %s = '')) "
+            "    OR "
+            "    (kcu.REFERENCED_TABLE_NAME = %s AND (kcu.REFERENCED_TABLE_SCHEMA = %s OR %s = ''))"
+            "  ) "
+            "ORDER BY direction DESC, source_table, target_table"
+        )
+        params = (
+            table_clean, target_schema, target_schema,
+            table_clean, target_schema, target_schema,
+            table_clean, target_schema, target_schema,
+        )
+        return sql, params
+
     def connect(self):
         import pymysql
         dsn = self.get_dsn()
@@ -927,6 +993,36 @@ class Oracle(DB):
             f") WHERE ROWNUM <= :{idx}"
         )
         return sql, tuple(params)
+
+    def get_relations_query(self, table: str, schema: str = ""):
+        target_schema, table_clean = self._parse_and_validate_table(table, schema)
+        target_schema = (target_schema or self.default_schema).upper()
+        sql = (
+            "SELECT "
+            "  CASE WHEN a.table_name = UPPER(:1) AND (a.owner = UPPER(:2) OR :2 IS NULL) THEN 'OUTGOING' ELSE 'INCOMING' END AS direction, "
+            "  a.constraint_name, "
+            "  a.owner || '.' || a.table_name AS source_table, "
+            "  ac.column_name AS source_column, "
+            "  c_pk.owner || '.' || c_pk.table_name AS target_table, "
+            "  uc.column_name AS target_column, "
+            "  a.delete_rule AS on_delete, "
+            "  'NO ACTION' AS on_update "
+            "FROM all_constraints a "
+            "JOIN all_cons_columns ac "
+            "  ON a.owner = ac.owner AND a.constraint_name = ac.constraint_name "
+            "JOIN all_constraints c_pk "
+            "  ON a.r_owner = c_pk.owner AND a.r_constraint_name = c_pk.constraint_name "
+            "JOIN all_cons_columns uc "
+            "  ON c_pk.owner = uc.owner AND c_pk.constraint_name = uc.constraint_name AND ac.position = uc.position "
+            "WHERE a.constraint_type = 'R' "
+            "  AND ("
+            "    (a.table_name = UPPER(:1) AND (a.owner = UPPER(:2) OR :2 IS NULL)) "
+            "    OR "
+            "    (c_pk.table_name = UPPER(:1) AND (c_pk.owner = UPPER(:2) OR :2 IS NULL))"
+            "  ) "
+            "ORDER BY direction DESC, source_table, target_table"
+        )
+        return sql, (table_clean.upper(), target_schema)
 
     def connect(self):
         import oracledb
@@ -1183,23 +1279,24 @@ async def execute(tool, d, context, sql, params=(), reject=None):
             trigger_reason = "allow_metadata does not permit 'read'"
             can_auto_allow = False
 
-    elif tool == "describe_table":
-        table_name = params[1] if len(params) > 1 else ""
-        if table_name:
-            queried_tables = {table_name.lower()}
+    elif tool in ("describe_table", "describe_relations", "list_indexes", "get_object_ddl"):
+        table_name = params[1] if (tool == "describe_table" and len(params) > 1) else (params[0] if params else "")
+        table_simple = str(table_name).split(".")[-1].strip().lower()
+        if table_simple:
+            queried_tables = {table_simple}
 
-        if table_name and matches_pattern(table_name, restricted_tables):
-            trigger_reason = f"restricted_table '{table_name}'"
+        if table_simple and matches_pattern(table_simple, restricted_tables):
+            trigger_reason = f"restricted_table '{table_simple}'"
             can_auto_allow = False
         elif "read" in allow_metadata:
             auto_allow = True
             auto_reason = "allow_metadata permits 'read'"
-        elif allow_tables and matches_pattern(table_name, allow_tables):
+        elif allow_tables and matches_pattern(table_simple, allow_tables):
             auto_allow = True
-            auto_reason = f"table '{table_name}' matches allow_tables"
+            auto_reason = f"table '{table_simple}' matches allow_tables"
         else:
-            trigger_reason = f"table '{table_name}' not in allow_tables"
-            candidate_tables = [table_name] if table_name else []
+            trigger_reason = f"table '{table_simple}' not in allow_tables"
+            candidate_tables = [table_simple] if table_simple else []
 
     elif tool in ("query", "sample_table"):
         if tool == "sample_table" and "read" in allow_metadata:
@@ -1688,6 +1785,22 @@ async def describe_table(
     out["columns"] = cols_out
 
     return json.dumps(out)
+
+
+@mcp.tool()
+async def describe_relations(
+    db: DbName,
+    table: str,
+    context: Context,
+    schema: str = "",
+) -> str:
+    """List incoming and outgoing foreign key relationships for a table.
+    Shows which tables this table references (outgoing) and which tables reference this table (incoming).
+    Returns matching relationships in columnar format {'columns': [...], 'rows': [...]}.
+    Auto-allowed when allow_metadata permits 'read'."""
+    d = get_db(db)
+    sql, params = d.get_relations_query(table, schema=schema)
+    return await execute("describe_relations", d, context, sql, params)
 
 
 @mcp.tool()
