@@ -11,12 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Token-Efficient Columnar Format for Tool Results**:
-  - Switched query, sample, and search tool outputs (`query`, `sample_table`, `find_objects`, `search_columns`, `list_tables`) from array-of-objects (`[{"col": val}, ...]`) to a compact columnar structure (`{"columns": [...], "rows": [[...], ...]}`).
-  - Eliminates repetitive column name keys across rows, reducing LLM token consumption by 50%–70% on database query responses.
-  - Updated `describe_table` to seamlessly parse both columnar format and legacy list-of-dicts structures.
-- **Compact String Array for `describe_table(compact=True)`**:
-  - Switched `columns` output in `compact=True` mode from a list of dictionaries (`[{"name": "...", "type": "..."}]`) to a hybrid concise string array (`["col_name: col_type", ...]`).
-  - Reduces token consumption by ~65% on wide schema lookups while preserving root JSON envelope and diagnostic status codes.
+  - Switched query and object search tools (`query`, `sample_table`, `find_objects`, `search_columns`, `list_tables`) to return compact columnar tables (`{"columns": [...], "rows": [[...], ...]}`), cutting LLM context token usage by 50%–70%.
+- **Unified Concise Schema Format for `describe_table`**:
+  - Standardized `columns` in `describe_table` to concise string representations (`COL: TYPE [NOT NULL]` in standard mode, and `COL: TYPE` when `compact=True`).
+  - Eliminates repetitive nested JSON dictionary keys, cutting metadata prompt tokens by ~50% to ~65% while keeping root diagnostic fields (`status`, `error_hint`) structured and reliable.
 - **Hybrid Table / Vertical Card Display in Monitor (`\\x auto` style)**:
   - Dynamically detects terminal column width via `shutil.get_terminal_size()`.
   - Renders compact horizontal tables when columns fit cleanly within terminal width.

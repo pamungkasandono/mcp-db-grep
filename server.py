@@ -1505,8 +1505,9 @@ async def describe_table(
     schema: str = "",
     compact: bool = False,
 ) -> str:
-    """Columns, data types, and nullability of a table or view. Supports 'schema.table' format.
-    Set compact=True to return concise string array ['COL: TYPE', ...] saving ~65% tokens on wide tables.
+    """Columns and data types of a table or view. Supports 'schema.table' format.
+    Returns concise string array ['COL: TYPE [NOT NULL]', ...].
+    Set compact=True to omit nullability tags for maximum token savings on wide tables.
     Returns object status (VALID/INVALID) and helpful diagnostic hints if invalid. Requires user approval."""
     d = get_db(db)
     table_clean = table.strip().strip('"').strip("'")
@@ -1551,10 +1552,9 @@ async def describe_table(
         if compact:
             cols_out.append(f"{col_name}: {col_type}")
         else:
-            col_def = {"name": col_name, "type": col_type}
-            if nullable:
-                col_def["nullable"] = nullable
-            cols_out.append(col_def)
+            is_non_null = str(nullable).strip().upper() in ("NO", "N", "FALSE", "0")
+            not_null_tag = " [NOT NULL]" if is_non_null else ""
+            cols_out.append(f"{col_name}: {col_type}{not_null_tag}")
 
     if status == "INVALID":
         error_hint = "View has compilation errors in database (status: INVALID). Querying this view will fail with ORA-04063."

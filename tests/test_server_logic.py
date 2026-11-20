@@ -477,7 +477,8 @@ dsn = "hr/hr@localhost/hr"
                 self.assertEqual(res["status"], "VALID")
                 self.assertNotIn("error_hint", res)
                 self.assertEqual(len(res["columns"]), 2)
-                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+                self.assertEqual(res["columns"][0], "EMP_ID: NUMBER(10) [NOT NULL]")
+                self.assertEqual(res["columns"][1], "NAME: VARCHAR2(50)")
 
             # Test 2: Compact mode (returns array of 'col: type' strings)
             with patch.object(server, "execute", return_value=mock_rows):
@@ -612,7 +613,8 @@ dsn = "hr/hr@localhost/hr"
                 self.assertEqual(res["table"], "employees")
                 self.assertEqual(res["status"], "VALID")
                 self.assertEqual(len(res["columns"]), 2)
-                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+                self.assertEqual(res["columns"][0], "EMP_ID: NUMBER(10) [NOT NULL]")
+                self.assertEqual(res["columns"][1], "NAME: VARCHAR2(50)")
 
             # Test with legacy list of dicts format
             legacy_rows = json.dumps([
@@ -621,7 +623,7 @@ dsn = "hr/hr@localhost/hr"
             with patch.object(server, "execute", return_value=legacy_rows):
                 res = json.loads(asyncio.run(server.describe_table("hr", "employees", "hr · desc")))
                 self.assertEqual(res["table"], "employees")
-                self.assertEqual(res["columns"][0], {"name": "EMP_ID", "type": "NUMBER(10)", "nullable": "N"})
+                self.assertEqual(res["columns"][0], "EMP_ID: NUMBER(10) [NOT NULL]")
 
     def test_execute_returns_columnar_format(self):
         sample_toml = b"""[monitor]
