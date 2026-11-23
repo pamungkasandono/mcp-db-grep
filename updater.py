@@ -319,8 +319,11 @@ def execute_upgrade() -> bool:
         # On Windows, db-grep.exe cannot be overwritten while this process is still running.
         # Launch pip after a 1s delay so the wrapper db-grep.exe exits and releases the lock first.
         quoted_cmd = subprocess.list2cmdline(cmd)
-        subprocess.Popen(["cmd", "/c", f"ping 127.0.0.1 -n 2 >nul & {quoted_cmd}"])
+        post_msg = 'echo. & echo [OK] db-grep successfully upgraded! Restart your terminal or clients to use the new version.'
+        subprocess.Popen(["cmd", "/c", f"ping 127.0.0.1 -n 2 >nul & {quoted_cmd} & {post_msg}"])
         print("Detaching updater so Windows can overwrite db-grep.exe...")
+        print("\n[!] Upgrade is in progress in the background on this SAME terminal.")
+        print("    The process has not finished yet. Please wait a few moments until pip finishes updating db-grep before running commands.\n")
         return True
 
     res = subprocess.run(cmd)
