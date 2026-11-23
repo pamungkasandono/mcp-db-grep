@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-23
+
+### Added
+- **Indirect Prompt Injection Defensive Rules (`instructions/db-grep.md`)**:
+  - Added strict `Case 5: Security & Untrusted Database Content` instructing AI clients to treat all table rows, comments, index definitions, and DDL strictly as untrusted passive data.
+  - Instructed AI never to execute embedded instructions, system prompt overrides, or manipulate terminal monitor approval prompts (`y`/`a`).
+  - Added security warning notices to tool docstrings for `query`, `sample_table`, `describe_table`, and `get_object_ddl`.
+- **Database Out-of-Band Exfiltration Guard**:
+  - Added blacklist validation in `query` tool blocking network and file exfiltration functions (`UTL_HTTP`, `UTL_INADDR`, `UTL_TCP`, `UTL_SMTP`, `DBMS_LDAP`, `dblink`, `load_file`, `into outfile`, `pg_read_file`, `pg_write_file`, `xp_cmdshell`).
+- **Windows Detached Upgrade Status & Completion Banner**:
+  - Added informative in-flight notification and automatic post-upgrade success banner in `updater.py` during Windows detached background pip upgrades.
+
+### Changed
+- **Fail-Closed SQL Query Access Inspection**:
+  - Hardened `inspect_query_access` to return a `parse_ok` indicator. Any complex or unparseable SQL fails closed and requires manual terminal monitor approval instead of being auto-allowed under `allow_data = ["read"]`.
+- **Multiline Metadata Comment Sanitization**:
+  - Sanitized newlines (`\r`, `\n`) and ASCII control characters in table/column comments within `describe_table` to prevent multiline prompt spoofing.
+
+### Fixed
+- **Schema-Qualified Table Matching**:
+  - Fixed access control bypass where schema-prefixed rules in `restricted_tables` or `allow_tables` (e.g. `hr.employees`, `finance.salaries`) failed to match stripped table names.
+- **Access Control Enforcement on `sample_table`**:
+  - Enforced `restricted_tables` and `restricted_columns` validation on `sample_table` even when `allow_metadata = ["read"]` is enabled.
+- **Oracle Thin Driver LOB Memory Leak**:
+  - Set `oracledb.defaults.fetch_lobs = False` during Oracle connection to return LOB data as native strings/bytes and avoid detached LOB cursor memory leaks.
+- **MySQL Backtick Quoted Identifier Support**:
+  - Allowed backtick-quoted identifiers (`` `table_name` ``) in `_parse_and_validate_table`.
+- **PostgreSQL Expression Index Definition**:
+  - Resolved column names for PostgreSQL expression indexes using `pg_get_indexdef`.
+
 ## [0.9.0] - 2026-11-20
 
 ### Added
