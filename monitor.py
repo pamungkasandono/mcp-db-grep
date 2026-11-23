@@ -393,10 +393,10 @@ async def handle(reader, writer):
 
             elif m["type"] == "result":
                 n = len(m["rows"])
-                print(f"{t} {D}{n} rows, {m['ms']} ms, sent to AI{N}")
                 show_table(m["cols"], m["rows"])
                 if n >= m["limit"]:
                     print(f"{Y}capped at {m['limit']} rows{N}")
+                print(f"{t} {D}{n} rows, {m['ms']} ms, sent to AI{N}")
                 print_auto_approve_banner()
                 if holding:
                     lock.release()

@@ -60,8 +60,15 @@ class TestMonitorApproval(unittest.TestCase):
 
         # First query pressed 'y', second query pressed 'n'
         keys = ["y", "n"]
-        with patch.object(monitor, "getch", side_effect=lambda _t: keys.pop(0)):
+        stdout_buf = io.StringIO()
+        with patch("sys.stdout", stdout_buf), patch.object(monitor, "getch", side_effect=lambda _t: keys.pop(0)):
             asyncio.run(monitor.handle(reader, writer))
+
+        out = stdout_buf.getvalue()
+        self.assertIn("sent to AI", out)
+        pos_data = out.find("1\n-\n1")
+        pos_sent = out.find("sent to AI")
+        self.assertTrue(pos_data != -1 and pos_sent != -1 and pos_data < pos_sent)
 
         # written[0] is hello, written[1] is 1st approval, written[2] is 2nd denial
         self.assertEqual(writer.written[0]["type"], "hello")
