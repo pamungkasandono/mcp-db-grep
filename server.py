@@ -517,12 +517,12 @@ class DB:
 
     @staticmethod
     def _parse_and_validate_table(table: str, schema: str = "") -> tuple[str, str]:
-        table_clean = table.strip().strip('"').strip("'")
-        target_schema = schema.strip().strip('"').strip("'")
+        table_clean = table.strip().strip('"').strip("'").strip("`")
+        target_schema = schema.strip().strip('"').strip("'").strip("`")
         if "." in table_clean and not target_schema:
             parts = table_clean.split(".", 1)
-            target_schema = parts[0].strip().strip('"').strip("'")
-            table_clean = parts[1].strip().strip('"').strip("'")
+            target_schema = parts[0].strip().strip('"').strip("'").strip("`")
+            table_clean = parts[1].strip().strip('"').strip("'").strip("`")
 
         if not re.match(r"^[A-Za-z0-9_#$]+$", table_clean):
             raise ValueError(f"Invalid table identifier: '{table}'")
@@ -598,7 +598,10 @@ class DB:
         sql = (
             "SELECT "
             "  i.relname AS index_name, "
-            "  string_agg(a.attname, ', ' ORDER BY array_position(ix.indkey, a.attnum)) AS columns, "
+            "  COALESCE( "
+            "    substring(pg_get_indexdef(ix.indexrelid) from '\\((.*)\\)'), "
+            "    string_agg(a.attname, ', ') "
+            "  ) AS columns, "
             "  CASE WHEN ix.indisunique THEN 'YES' ELSE 'NO' END AS is_unique, "
             "  CASE WHEN ix.indisprimary THEN 'YES' ELSE 'NO' END AS is_primary, "
             "  am.amname AS index_type "
@@ -607,9 +610,9 @@ class DB:
             "JOIN pg_class i ON i.oid = ix.indexrelid "
             "JOIN pg_namespace n ON n.oid = t.relnamespace "
             "JOIN pg_am am ON am.oid = i.relam "
-            "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) "
+            "LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) "
             "WHERE t.relname = %s AND (n.nspname = %s OR %s = '') "
-            "GROUP BY i.relname, ix.indisunique, ix.indisprimary, am.amname "
+            "GROUP BY i.relname, ix.indexrelid, ix.indisunique, ix.indisprimary, am.amname "
             "ORDER BY is_primary DESC, is_unique DESC, index_name"
         )
         return sql, (table_clean, target_schema, target_schema)
@@ -1144,6 +1147,7 @@ class Oracle(DB):
         import oracledb
         import oracle_driver
 
+        oracledb.defaults.fetch_lobs = False
         oracle_driver.ensure_thick_mode()
         dsn = self.get_dsn()
         pw = self.get_password()
@@ -1415,39 +1419,45 @@ async def execute(tool, d, context, sql, params=(), reject=None, table_for_auth=
             candidate_tables = [table_simple] if table_simple else []
 
     elif tool in ("query", "sample_table"):
-        if tool == "sample_table" and "read" in allow_metadata:
+        queried_tables, queried_columns, has_star = inspect_query_access(
+            sql, dialect=d.cfg.get("type", "postgres")
+        )
+        if tool == "sample_table" and not queried_tables:
+            t_clean = (table_for_auth or (params[0] if params and isinstance(params[0], str) else "")).split(".")[-1].strip().lower()
+            if t_clean:
+                queried_tables = {t_clean}
+                has_star = True
+
+        # Priority 1: Restricted columns (Highest priority)
+        matched_restricted = check_restricted_columns(
+            queried_columns, queried_tables, has_star, restricted_columns
+        )
+        if matched_restricted:
+            trigger_reason = f"restricted column(s): {', '.join(matched_restricted)}"
+            can_auto_allow = False
+
+        # Priority 2: Restricted tables (High priority)
+        elif any(matches_pattern(tbl, restricted_tables) for tbl in queried_tables):
+            matched_restricted_tbls = [tbl for tbl in queried_tables if matches_pattern(tbl, restricted_tables)]
+            trigger_reason = f"restricted_table(s): {', '.join(sorted(matched_restricted_tbls))}"
+            can_auto_allow = False
+
+        # Priority 3: allow_metadata for sample_table on non-restricted tables
+        elif tool == "sample_table" and "read" in allow_metadata:
             auto_allow = True
             auto_reason = "allow_metadata permits 'read'"
+
+        # Priority 4: allow_data or allow_tables
+        elif "read" in allow_data:
+            auto_allow = True
+            auto_reason = "allow_data permits 'read'"
+        elif queried_tables and all(matches_pattern(tbl, allow_tables) for tbl in queried_tables):
+            auto_allow = True
+            auto_reason = f"all tables ({', '.join(sorted(queried_tables))}) match allow_tables"
         else:
-            queried_tables, queried_columns, has_star = inspect_query_access(
-                sql, dialect=d.cfg.get("type", "postgres")
-            )
-
-            # Priority 1: Restricted columns (Highest priority)
-            matched_restricted = check_restricted_columns(
-                queried_columns, queried_tables, has_star, restricted_columns
-            )
-            if matched_restricted:
-                trigger_reason = f"restricted column(s): {', '.join(matched_restricted)}"
-                can_auto_allow = False
-
-            # Priority 2: Restricted tables (High priority)
-            elif any(matches_pattern(tbl, restricted_tables) for tbl in queried_tables):
-                matched_restricted_tbls = [tbl for tbl in queried_tables if matches_pattern(tbl, restricted_tables)]
-                trigger_reason = f"restricted_table(s): {', '.join(sorted(matched_restricted_tbls))}"
-                can_auto_allow = False
-
-            # Priority 3: allow_data or allow_tables
-            elif "read" in allow_data:
-                auto_allow = True
-                auto_reason = "allow_data permits 'read'"
-            elif queried_tables and all(matches_pattern(tbl, allow_tables) for tbl in queried_tables):
-                auto_allow = True
-                auto_reason = f"all tables ({', '.join(sorted(queried_tables))}) match allow_tables"
-            else:
-                unapproved = [tbl for tbl in queried_tables if not matches_pattern(tbl, allow_tables)]
-                trigger_reason = f"unapproved table(s): {', '.join(sorted(unapproved))}" if unapproved else "query requires approval"
-                candidate_tables = sorted(unapproved)
+            unapproved = [tbl for tbl in queried_tables if not matches_pattern(tbl, allow_tables)]
+            trigger_reason = f"unapproved table(s): {', '.join(sorted(unapproved))}" if unapproved else "query requires approval"
+            candidate_tables = sorted(unapproved)
 
     async with lock:
         try:
@@ -1808,16 +1818,12 @@ async def describe_table(
     """Columns and data types of a table or view. Supports 'schema.table' format.
     Returns concise string array ['COL: TYPE [NOT NULL]', ...].
     Set compact=True to omit nullability tags for maximum token savings on wide tables.
-    Returns object status (VALID/INVALID) and helpful diagnostic hints if invalid. Requires user approval."""
+    Returns object status (VALID/INVALID) and helpful diagnostic hints if invalid.
+    Auto-allowed when allow_metadata permits 'read' (unless table is restricted)."""
     d = get_db(db)
-    table_clean = table.strip().strip('"').strip("'")
-    target_schema = schema.strip()
-    if "." in table_clean and not target_schema:
-        parts = table_clean.split(".", 1)
-        target_schema = parts[0].strip().strip('"').strip("'")
-        table_clean = parts[1].strip().strip('"').strip("'")
+    target_schema, table_clean = d._parse_and_validate_table(table, schema)
 
-    res_json = await execute("describe_table", d, context, d.DESC_SQL, (target_schema or d.default_schema, table_clean))
+    res_json = await execute("describe_table", d, context, d.DESC_SQL, (target_schema or d.default_schema, table_clean), table_for_auth=table_clean)
     try:
         raw_rows = json.loads(res_json)
     except Exception:
@@ -1983,8 +1989,9 @@ async def sample_table(
     Returns rows in columnar format {'columns': [...], 'rows': [...]} for token efficiency.
     Ideal for inspecting real data values and column formats without writing manual queries."""
     d = get_db(db)
+    target_schema, table_clean = d._parse_and_validate_table(table, schema)
     sql, params = d.get_sample_query(table, limit=limit, schema=schema)
-    return await execute("sample_table", d, context, sql, params)
+    return await execute("sample_table", d, context, sql, params, table_for_auth=table_clean)
 
 
 @mcp.tool()

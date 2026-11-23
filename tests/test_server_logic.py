@@ -572,6 +572,11 @@ dsn = "hr/hr@localhost/hr"
         with self.assertRaises(ValueError):
             pg.get_sample_query("users; DROP TABLE users--")
 
+        # 5. Backtick identifier stripping
+        target_schema, table_clean = pg._parse_and_validate_table("`orders`", "`shop`")
+        self.assertEqual(target_schema, "shop")
+        self.assertEqual(table_clean, "orders")
+
     def test_search_columns_dialect_queries(self):
         # 1. Postgres
         pg = server.Postgres("pg_test", {"type": "postgres", "dsn": "postgres://localhost/test"})
@@ -805,6 +810,58 @@ dsn = "postgres://localhost/crm"
                     ["P02", "BUDI", "STAFF"],
                 ],
             })
+
+    def test_sample_table_restricted_access_control(self):
+        sample_toml = b"""[monitor]
+port = 48260
+
+[defaults]
+allow_metadata = ["read"]
+
+[db.postgres.crm]
+dsn = "postgres://localhost/crm"
+restricted_tables = ["payroll_*", "secret"]
+restricted_columns = ["salary*", "nik"]
+
+[db.postgres.crm2]
+dsn = "postgres://localhost/crm"
+restricted_tables = ["payroll_*"]
+restricted_columns = []
+"""
+        with self.temp_config(sample_toml):
+            sent_messages = []
+            async def fake_ensure(timeout_sec=0):
+                return
+            async def fake_send(msg):
+                sent_messages.append(msg)
+            server.link.ensure = fake_ensure
+            server.link.send = fake_send
+
+            mock_reader = MagicMock()
+            mock_reader.readline = MagicMock()
+            async def fake_readline():
+                return b'{"approved": true}\n'
+            mock_reader.readline = fake_readline
+            server.link.reader = mock_reader
+
+            with patch.object(server.Postgres, "run", return_value=(["id", "amount"], [(1, 5000)])):
+                # Test 1: sample_table on table matching restricted_columns MUST trigger request approval and NOT auto_allow
+                res = asyncio.run(server.sample_table("crm", "payroll_data", "crm · audit payroll", limit=5))
+                req_messages = [m for m in sent_messages if m.get("type") == "request"]
+                self.assertTrue(len(req_messages) > 0)
+                self.assertFalse(req_messages[0]["can_auto_allow"])
+                # Ensure auto_allow was NOT sent
+                auto_messages = [m for m in sent_messages if m.get("type") == "auto_allow"]
+                self.assertEqual(len(auto_messages), 0)
+
+                # Test 2: restricted table when restricted_columns is empty triggers restricted_table(s)
+                sent_messages.clear()
+                res2 = asyncio.run(server.sample_table("crm2", "payroll_data", "crm · audit payroll 2", limit=5))
+                req_messages2 = [m for m in sent_messages if m.get("type") == "request"]
+                self.assertTrue(len(req_messages2) > 0)
+                self.assertEqual(req_messages2[0]["trigger_reason"], "restricted_table(s): payroll_data")
+                self.assertFalse(req_messages2[0]["can_auto_allow"])
+                self.assertEqual(len([m for m in sent_messages if m.get("type") == "auto_allow"]), 0)
 
     def test_inspect_query_access_and_columns(self):
         # 1. Simple query
