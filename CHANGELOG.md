@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-26
+
+### Changed
+- **Monitor Result Summary as Response Boundary**:
+  - Moved the result status banner (`[A] N rows, M ms, sent to AI`) to render after the data table/cards output in `monitor.py` instead of before it, creating a distinct delimiter between request/response transactions and preventing clutter above output tables.
+
 ## [0.10.0] - 2026-11-23
 
 ### Added
